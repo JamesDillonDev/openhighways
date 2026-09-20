@@ -326,3 +326,62 @@
 .app-footer a {
   color: #888;
 }
+
+.source-credits {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 1000;
+  max-width: min(420px, calc(100vw - 24px));
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #666;
+}
+
+.source-credits-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.source-credits-toggle:hover {
+  color: #111;
+}
+
+.source-credits-detail {
+  margin: 0;
+  padding: 8px;
+  border-top: 1px solid #eee;
+  line-height: 1.45;
+  /* Expanded, this is most of a phone screen already - scroll rather than
+     run off the bottom if another source is added. */
+  max-height: 45vh;
+  overflow-y: auto;
+}
+
+.source-credits-detail div + div {
+  margin-top: 6px;
+}
+
+.source-credits-detail dt {
+  font-weight: 600;
+  color: #444;
+}
+
+.source-credits-detail dd {
+  margin: 0;
+}
+
+.source-credits-detail a {
+  color: #444;
+}

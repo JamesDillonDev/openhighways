@@ -10,7 +10,7 @@ const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.3.0'
+const APP_VERSION = 'v1.4.0'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
@@ -21,6 +21,57 @@ const SOURCE_LABELS = {
   traffic_scotland: 'Traffic Scotland',
   traffic_wales: 'Traffic Wales',
   northern_ireland: 'Traffic Watch NI',
+}
+
+// Each provider sets its own terms for reuse, and several specify the exact
+// wording - TfL's three statements in particular are quoted verbatim from
+// its Transport Data Service terms. Keep an entry here whenever a source is
+// added, and take its wording from that source's own terms rather than
+// paraphrasing it.
+const SOURCE_CREDITS = [
+  {
+    source: 'national_highways',
+    href: 'https://nationalhighways.co.uk/travel-updates/traffic-cameracctv-services/crown-copyright-notice/',
+    lines: [
+      'Images from National Highways\u2019 traffic management cameras.',
+      '\u00a9 Crown copyright.',
+    ],
+  },
+  {
+    source: 'tfl',
+    href: 'https://tfl.gov.uk/corporate/terms-and-conditions/transport-data-service',
+    lines: [
+      'Powered by TfL Open Data.',
+      'Contains OS data \u00a9 Crown copyright and database rights 2016.',
+      'Geomni UK Map data \u00a9 and database rights [2019].',
+    ],
+  },
+  {
+    source: 'traffic_wales',
+    href: 'https://traffic.wales/developers',
+    lines: ['Camera data sourced from Traffic Wales.'],
+  },
+  {
+    source: 'northern_ireland',
+    href: 'https://www.trafficwatchni.com/twni/crown-copyright',
+    lines: [
+      'Camera data from the DfI Traffic Information and Control Centre.',
+      '\u00a9 Crown copyright, licensed under the Open Government Licence v3.0.',
+    ],
+  },
+  {
+    source: 'openstreetmap',
+    href: 'https://www.openstreetmap.org/copyright',
+    lines: [
+      'Map tiles, and the road geometry used to place Welsh and Northern',
+      'Irish cameras, \u00a9 OpenStreetMap contributors, licensed under the ODbL.',
+    ],
+  },
+]
+
+const CREDIT_LABELS = {
+  ...SOURCE_LABELS,
+  openstreetmap: 'OpenStreetMap',
 }
 
 // Colour-coded badge shown next to a camera's name so its source is
@@ -321,6 +372,47 @@ function CameraPanel({ camera, onClose }) {
   )
 }
 
+// Sits bottom-left, opposite Leaflet's own attribution. Providers require
+// their credit to be shown, so the list of names is always visible and the
+// toggle only expands the full statements rather than hiding the credit.
+function SourceCredits() {
+
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="source-credits">
+
+      <button
+        className="source-credits-toggle"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+      >
+        <span>
+          Camera data:{' '}
+          {SOURCE_CREDITS.map((credit) => CREDIT_LABELS[credit.source]).join(' \u00b7 ')}
+        </span>
+        <span aria-hidden="true">{open ? '\u2715' : '\u24d8'}</span>
+      </button>
+
+      {open && (
+        <dl className="source-credits-detail">
+          {SOURCE_CREDITS.map((credit) => (
+            <div key={credit.source}>
+              <dt>
+                <a href={credit.href} target="_blank" rel="noreferrer">
+                  {CREDIT_LABELS[credit.source]}
+                </a>
+              </dt>
+              <dd>{credit.lines.join(' ')}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+    </div>
+  )
+}
+
 function App() {
   const [cameras, setCameras] = useState([])
   const [selected, setSelected] = useState(null)
@@ -485,6 +577,8 @@ function App() {
           </CircleMarker>
         ))}
       </MapContainer>
+
+      <SourceCredits />
 
       <CameraPanel camera={selected} onClose={() => setSelected(null)} />
     </div>
