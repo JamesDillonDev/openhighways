@@ -6,6 +6,9 @@ from pathlib import Path
 import requests
 from flask import Flask, Response, jsonify, send_from_directory
 from flask_cors import CORS
+from flask_swagger_ui import get_swaggerui_blueprint
+
+from openapi import SPEC as OPENAPI_SPEC
 
 # The scraper/config/db code lives in src/, not on the default import path.
 SRC_DIR = Path(__file__).resolve().parent.parent / "src"
@@ -16,10 +19,9 @@ from config import USER_AGENT, section  # noqa: E402
 
 API_SETTINGS = section("api")
 
-# Some hosts (e.g. Fly.io) assign the port/public URL at deploy time rather
-# than letting config.json hardcode them - env vars take priority when set.
+# Some hosts (e.g. Fly.io) assign the port at deploy time rather than
+# letting config.json hardcode it - the env var takes priority when set.
 PORT = int(os.environ.get("PORT", API_SETTINGS["port"]))
-CORS_ORIGIN = os.environ.get("CORS_ORIGIN", API_SETTINGS["cors_origin"])
 
 # Only present when the frontend's build output was baked into this image
 # (see Dockerfile.fly) - lets this one process serve the UI too, rather
@@ -35,8 +37,56 @@ IMAGE_PROXY_HEADERS = {
     "northern_ireland": {"Referer": "https://www.trafficwatchni.com/twni/cameras"},
 }
 
+# Where the interactive docs live, and where they read their spec from.
+# Both are under /api/ so they survive the frontend catch-all route below.
+DOCS_URL = "/api/docs"
+OPENAPI_URL = "/api/openapi.json"
+
 app = Flask(__name__)
-CORS(app, origins=[CORS_ORIGIN])
+
+# Open to any origin, because this is a public, read-only, unauthenticated
+# API and locking it to the map's own origin only stopped other people's
+# browser apps from using it (see /api/docs). Nothing here reads a cookie,
+# a session or an Authorization header, so there is no cross-site request
+# an attacker could make from a victim's browser that they couldn't just as
+# easily make from their own machine - which is what same-origin policy
+# actually protects against.
+#
+# Scoped to /api/* rather than the whole app: the frontend this process may
+# also be serving (see below) is same-origin with it and needs no CORS
+# headers of its own.
+#
+# send_wildcard makes the response say `*` rather than echoing back whoever
+# asked. Echoing means the response body varies by request origin, so a CDN
+# or proxy has to cache a separate copy per caller (and fails closed for
+# everyone if it doesn't); a literal `*` is one cacheable answer, and it is
+# what is actually true here.
+CORS(
+    app,
+    resources={r"/api/*": {"origins": "*"}},
+    send_wildcard=True,
+    # Every endpoint is a read. Advertising DELETE/POST/PUT (flask-cors'
+    # default) would suggest writes exist.
+    methods=["GET", "HEAD", "OPTIONS"],
+)
+
+# Swagger UI for this API, so it can be read and tried out in a browser
+# rather than only from the map frontend. flask_swagger_ui ships its own
+# copy of Swagger UI's assets, so the docs page doesn't depend on a CDN
+# being reachable (or on it still serving the same build next year).
+app.register_blueprint(
+    get_swaggerui_blueprint(
+        DOCS_URL,
+        OPENAPI_URL,
+        config={
+            "app_name": "OpenHighways API",
+            # The spec is one small tag; expanding it saves every visitor a
+            # click before they can see what the API actually offers.
+            "docExpansion": "list",
+            "defaultModelsExpandDepth": 2,
+        },
+    ),
+)
 
 # Reused across requests instead of a fresh requests.get() each time - avoids
 # re-paying a TLS handshake to the upstream CDN on every single image poll.
@@ -123,6 +173,14 @@ def _camera_dict(record):
         data["image_url"] = f"/api/cameras/{data['id']}/image"
 
     return data
+
+
+@app.get(OPENAPI_URL)
+def get_openapi_spec():
+    """This API's OpenAPI description - what /api/docs renders, and what a
+    client generator would read."""
+
+    return jsonify(OPENAPI_SPEC)
 
 
 @app.get("/api/cameras")

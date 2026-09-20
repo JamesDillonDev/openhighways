@@ -39,6 +39,7 @@ src/
     traffic_scotland.py             # Traffic Scotland (stub pending subscriber access)
 backend/
   app.py                 # Flask API serving camera data (from the database) to the frontend
+  openapi.py              # the API's OpenAPI description, served at /api/docs
 frontend/                 # React + Leaflet map UI
 ```
 
@@ -48,13 +49,13 @@ frontend/                 # React + Leaflet map UI
 - `requests`, `beautifulsoup4` (HTML-scraping sources)
 - `shapely`, `pyproj` (National Highways road-geometry matching)
 - `opencv-python`, `numpy` (vehicle detection)
-- `flask`, `flask-cors` (`backend/app.py`)
+- `flask`, `flask-cors`, `flask-swagger-ui` (`backend/app.py`)
 - Node.js (`frontend/`)
 
 Install with:
 
 ```powershell
-pip install requests beautifulsoup4 shapely pyproj opencv-python numpy flask flask-cors
+pip install requests beautifulsoup4 shapely pyproj opencv-python numpy flask flask-cors flask-swagger-ui
 cd frontend; npm install
 ```
 
@@ -126,6 +127,42 @@ panel with the live image (click it to enlarge) and traffic history. The
 frontend polls `/api/cameras` every 30 seconds and refreshes open camera
 images every 15 seconds.
 
+## API
+
+The backend is a public, read-only HTTP API, and the map is just one client
+of it - anyone can call it directly. It needs no API key and nothing to sign
+up for, and CORS is open to any origin, so a browser app on another domain
+can call it without a server of its own in the middle.
+
+Interactive documentation (Swagger UI) is served by the API itself at
+**`/api/docs`**, with the OpenAPI description behind it at
+`/api/openapi.json` - point a client generator at that URL if you'd rather
+not write the requests by hand.
+
+| Endpoint                        | Returns                                                            |
+| -------------------------------- | ------------------------------------------------------------------- |
+| `GET /api/cameras`               | Every active, located camera with its latest vehicle count           |
+| `GET /api/cameras/{id}/history`  | One camera's vehicle counts over time, oldest first                  |
+| `GET /api/cameras/{id}/image`    | One camera's current image, fetched from its provider                |
+| `GET /api/openapi.json`          | The OpenAPI 3 description of all of the above                        |
+
+Two things worth knowing before building on it:
+
+- **Load camera images from each camera's own `image_url`, not through
+  `/api/cameras/{id}/image`.** That URL normally points straight at the
+  provider's image host, which is what keeps this cheap to run; the proxy
+  endpoint exists only for TrafficWatchNI, whose image host rejects requests
+  that aren't referred from its own site, and those cameras already have
+  their `image_url` set to it.
+- **The providers' terms follow the data.** Each source sets conditions on
+  reuse and several specify the exact wording (see the credits panel on the
+  map, or the Attribution section in `/api/docs`) - anything built on this
+  API has to carry the same credits.
+
+The spec lives in [`backend/openapi.py`](backend/openapi.py), written by
+hand rather than generated from the route decorators - update it there when
+an endpoint or a field changes.
+
 ## Database
 
 [`src/db.py`](src/db.py) is the primary source of truth (SQLite,
@@ -187,7 +224,6 @@ one section per source under `sources`, plus `vehicle_watcher` and `api`.
 | `vehicle_watcher`                 | `confidence_threshold`/`nms_threshold` | Detection thresholds                  |
 | `vehicle_watcher`                 | `max_history_points`  | History points kept per camera                         |
 | `api`                              | `host` / `port`       | Where `backend/app.py` listens                         |
-| `api`                              | `cors_origin`         | Frontend origin allowed to call the API                |
 
 `src/config.py` just loads `config.json` and exposes it to the modules - edit
 `config.json` to change any setting, not `config.py`.

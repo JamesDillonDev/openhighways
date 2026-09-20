@@ -10,7 +10,7 @@ const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.4.0'
+const APP_VERSION = 'v1.4.1'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
@@ -542,6 +542,10 @@ function App() {
           <a href="https://jamesdillon.uk" target="_blank" rel="noreferrer">jamesdillon.uk</a>
           <span>&middot;</span>
           <span>{APP_VERSION}</span>
+          <span>&middot;</span>
+          {/* The same API this map runs on is public and documented - the
+              footer is the only place a visitor would think to look for it. */}
+          <a href="/api/docs" target="_blank" rel="noreferrer">API</a>
           <span>&middot;</span>
           <a href={REPO_URL} target="_blank" rel="noreferrer">GitHub</a>
         </div>

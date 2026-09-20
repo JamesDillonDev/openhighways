@@ -6,4 +6,5 @@ opencv-python-headless
 numpy
 flask
 flask-cors
+flask-swagger-ui
 gunicorn
