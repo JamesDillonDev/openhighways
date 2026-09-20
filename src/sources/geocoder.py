@@ -78,7 +78,16 @@ class RoadSnappingGeocoder:
         self._geocode_cache_path = geocode_cache_path
         self._geocode_cache = self._load_cache(geocode_cache_path)
         self._road_cache_path = road_cache_path
-        self._road_cache = self._load_cache(road_cache_path)
+        # Drop any road number cached as having no geometry. Earlier versions
+        # wrote that on an Overpass failure, and a bad regex escape did the
+        # same for "A48(M)" - either way it's wrong, and left on disk it
+        # would outlive the fix. Street names are kept: nothing found there
+        # really does mean OSM has no street by that name.
+        self._road_cache = {
+            key: lines
+            for key, lines in self._load_cache(road_cache_path).items()
+            if lines or key.startswith("name:")
+        }
 
         # Measuring in degrees is meaningless, so road geometry is projected
         # to British National Grid (metres) before anything is compared.
@@ -342,10 +351,15 @@ class RoadSnappingGeocoder:
                 self._road_shapes[key] = None
                 return None
 
-            # An empty answer is still an answer: OSM genuinely has no way
-            # by this name, and asking again next run won't change that.
-            self._road_cache[key] = lines
-            self._save_cache(self._road_cache_path, self._road_cache)
+            # An empty answer is still an answer for a street name: OSM
+            # genuinely has no way called that, and asking again next run
+            # won't change it. For a road number it isn't - we only ever
+            # look up numbers a camera claims to be on, so nothing found
+            # means the query was wrong, not the road absent. Caching that
+            # would outlive the fix, so leave it to be asked again.
+            if lines or tag == "name":
+                self._road_cache[key] = lines
+                self._save_cache(self._road_cache_path, self._road_cache)
 
         self._road_shapes[key] = self._project(lines)
 
@@ -361,9 +375,17 @@ class RoadSnappingGeocoder:
 
         south, west, north, east = self.road_bbox
 
+        # Escaped twice over: once so the regex treats "A48(M)"'s brackets as
+        # literals, and again because Overpass strips a level of backslashes
+        # off the surrounding string literal before the regex ever sees it.
+        # Missing the second pass turns "A48\(M\)" into the pattern A48(M),
+        # which matches the ref "A48M" - a road that doesn't exist, so the
+        # lookup quietly returned nothing.
+        pattern = self._literal(re.escape(value))
+
         return (
             f'way({south},{west},{north},{east})'
-            f'["{tag}"~"(^|;){re.escape(value)}(;|$)"]'
+            f'["{tag}"~"(^|;){pattern}(;|$)"]'
             f'["highway"~"^({self.highway_types})(_link)?$"];'
         )
 
