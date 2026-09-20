@@ -9,17 +9,21 @@ no per-camera page fetch, ID range scan, or road-geometry lookup needed.
 TrafficWatchNI's own interactive map plots these same cameras with real
 coordinates, but that data comes from a CSRF-token-gated AJAX endpoint tied
 to a browser session - not worth reverse engineering for what the public
-HTML listing already gives us. Coordinates are instead approximated the
-same way Traffic Wales's are: geocoding each camera's name/region with
-OpenStreetMap's free Nominatim search (cached to disk).
+HTML listing already gives us. Coordinates come from OpenStreetMap instead,
+via the shared geocoder in `geocoder.py`.
+
+Unlike Traffic Wales, though, most of these cameras aren't at a place at
+all - they watch an urban crossroads, and are named for it: "Falls Road -
+Donegall Road". Geocoding that gets nowhere, because it isn't a place. So
+the two street names are pulled apart and looked up in OSM instead, and
+where their geometry crosses is the camera, to within a few metres. Only
+the labels that aren't junctions - a stretch of the M2, a named spot in
+Omagh - fall through to geocoding.
 """
 
 from __future__ import annotations
 
-import json
 import re
-import time
-from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin
 
@@ -29,6 +33,7 @@ from bs4 import BeautifulSoup
 from config import CONFIG_DIR, USER_AGENT, section
 from models import SourceCamera
 
+from .geocoder import RoadSnappingGeocoder
 from .source import Source
 
 
@@ -40,6 +45,27 @@ class NorthernIrelandSource(Source):
     TITLE_PREFIX_RE = re.compile(r"^View camera\s*:\s*", re.IGNORECASE)
     ONCLICK_RE = re.compile(r'addToPreview\(\d+,\s*"([^"]+)",\s*"\d+",\s*"([^"]+)"')
 
+    #: The separators TrafficWatchNI puts between the two halves of a
+    #: junction name - " - ", a slash, or a bare hyphen between words.
+    JUNCTION_SPLIT_RE = re.compile(r"\s+-\s+|\s*/\s*|(?<=[a-z])-(?=[A-Z])")
+
+    #: Shorthand used in camera labels, spelled out the way OSM writes it.
+    ABBREVIATIONS = {
+        r"\bRd\b": "Road",
+        r"\bSt\b": "Street",
+        r"\bAve?\b": "Avenue",
+        r"\bDr\b": "Drive",
+        r"\bLn\b": "Lane",
+        r"\bSq\b": "Square",
+        r"\bNth\b": "North",
+        r"\bSth\b": "South",
+        r"\bUpp\b": "Upper",
+        r"\bC'way\b": "Causeway",
+        r"\bR'bout\b": "Roundabout",
+        r"\bN'ards\b": "Newtownards",
+        r"\bK'Breda\b": "Knockbreda",
+    }
+
     def __init__(self) -> None:
 
         super().__init__()
@@ -50,12 +76,15 @@ class NorthernIrelandSource(Source):
         self.index_path = settings["index_path"]
         self.request_timeout = settings.get("request_timeout", 20)
 
-        self.geocode_base_url = settings["geocode_base_url"]
-        self.geocode_delay = settings.get("geocode_delay_seconds", 1.0)
-        self._geocode_cache_path = CONFIG_DIR / "northern_ireland_geocode_cache.json"
-        self._geocode_cache = self._load_geocode_cache()
-
         self.session = self._build_session(USER_AGENT, workers=1)
+
+        self.geocoder = RoadSnappingGeocoder(
+            self.session,
+            self.logger,
+            settings,
+            CONFIG_DIR / "northern_ireland_geocode_cache.json",
+            CONFIG_DIR / "northern_ireland_road_cache.json",
+        )
 
         # cctv.trafficwatchni.com 403s any image request without its own
         # site as the Referer - unlike every other source, this isn't
@@ -166,13 +195,15 @@ class NorthernIrelandSource(Source):
             if raw_camera:
                 cameras[raw_camera["id"]] = self._normalise(raw_camera)
 
-        # Geocoding hits an external, rate-limited service - do it as a
-        # separate sequential pass, and only for cameras not already
-        # cached from a past run.
+        # Locating hits external, rate-limited services (Overpass and
+        # Nominatim) - do it as a separate sequential pass, and only for
+        # cameras and streets not already cached from a past run.
         for camera in cameras.values():
-            camera.latitude, camera.longitude = self._geocode(camera.name, camera.extra.get("region"))
+            camera.latitude, camera.longitude = self._locate(
+                camera.name, camera.road, camera.extra.get("region")
+            )
 
-        self._save_geocode_cache()
+        self.geocoder.save()
 
         return cameras
 
@@ -193,26 +224,91 @@ class NorthernIrelandSource(Source):
         )
 
     # ------------------------------------------------------------------
-    # Geocoding: approximate coordinates via OpenStreetMap's free Nominatim
-    # search, cached to disk since it's rate-limited to ~1 request/second.
+    # Locating: most of these cameras watch a junction rather than sit at a
+    # place, so try the crossing first and fall back to geocoding a name.
     # ------------------------------------------------------------------
 
-    def _load_geocode_cache(self) -> dict:
+    def _locate(
+        self,
+        name: Optional[str],
+        road: Optional[str],
+        region: Optional[str],
+    ) -> tuple[Optional[float], Optional[float]]:
 
-        if not self._geocode_cache_path.exists():
-            return {}
+        streets = self._junction_streets(name)
 
-        try:
-            return json.loads(self._geocode_cache_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
+        if streets:
 
-    def _save_geocode_cache(self) -> None:
+            # The first street doubles as the anchor - it tells the
+            # geocoder roughly which town to search for the crossing in.
+            crossing = self.geocoder.locate_junction(
+                *streets, anchor_query=f"{streets[0]}, Northern Ireland, UK"
+            )
 
-        self._geocode_cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self._geocode_cache_path.write_text(
-            json.dumps(self._geocode_cache, indent=2), encoding="utf-8"
-        )
+            if crossing:
+                return crossing
+
+            self.logger.debug("No crossing found for %s x %s", *streets)
+
+        cleaned_name = self._clean_name(name)
+
+        queries = []
+
+        if name:
+            queries.append(f"{name}, Northern Ireland, UK")
+        if cleaned_name and cleaned_name != name:
+            queries.append(f"{cleaned_name}, Northern Ireland, UK")
+        if cleaned_name and region:
+            queries.append(f"{cleaned_name}, {region}, Northern Ireland, UK")
+
+        return self.geocoder.locate(queries, road)
+
+    def _junction_streets(self, name: Optional[str]) -> Optional[tuple[str, str]]:
+        """The two street names in a junction label, or None if it isn't one.
+
+        TrafficWatchNI writes these as "Falls Road - Donegall Road", with
+        enough variation ("Orritor Street/William Street, Cookstown",
+        "Donegall Square South-Adelaide Street") to be worth handling, and
+        enough abbreviation ("Andersonstown Rd - Finaghy Rd Nth") that the
+        halves need expanding before OSM will recognise them.
+        """
+
+        if not name:
+            return None
+
+        parts = [part for part in self.JUNCTION_SPLIT_RE.split(name) if part]
+
+        if len(parts) < 2:
+            return None
+
+        streets = []
+
+        for part in parts[:2]:
+            # A trailing town ("..., Cookstown") and an equipment code
+            # ("(0B14)") both belong to the camera, not to the street.
+            part = part.split(",")[0]
+            part = re.sub(r"\(.*?\)", " ", part)
+            street = self._expand(part)
+
+            # One bare word is as likely to be half a mangled name as a real
+            # street, and a wrong crossing is worse than no crossing.
+            if not street or " " not in street:
+                return None
+
+            streets.append(street)
+
+        return streets[0], streets[1]
+
+    def _expand(self, street: str) -> str:
+        """Spell out the abbreviations TrafficWatchNI uses, since OSM's
+        `name` tag is always written out in full."""
+
+        expanded = street.replace("’", "'").strip()
+
+        for pattern, full in self.ABBREVIATIONS.items():
+            expanded = re.sub(pattern, full, expanded, flags=re.IGNORECASE)
+
+        return re.sub(r"\s+", " ", expanded).strip(" -/")
 
     def _clean_name(self, name: Optional[str]) -> Optional[str]:
         """Strip road-prefixes/junction codes that hurt Nominatim matches
@@ -224,65 +320,8 @@ class NorthernIrelandSource(Source):
 
         cleaned = re.sub(r"^[A-Z]\d+(?:\([A-Z]\))?\s*-\s*", "", name)
         cleaned = re.sub(r"\s*-\s*J\d+[A-Z]?$", "", cleaned)
+        cleaned = re.sub(r"\(.*?\)", " ", cleaned)
         cleaned = re.sub(r"\b(Junction|Jct)\b", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+", " ", cleaned)
 
         return cleaned.strip() or None
-
-    def _geocode(self, name: Optional[str], region: Optional[str]) -> tuple[Optional[float], Optional[float]]:
-
-        cleaned_name = self._clean_name(name)
-
-        attempts = []
-
-        if name:
-            attempts.append(f"{name}, Northern Ireland, UK")
-        if cleaned_name and cleaned_name != name:
-            attempts.append(f"{cleaned_name}, Northern Ireland, UK")
-        if cleaned_name and region:
-            attempts.append(f"{cleaned_name}, {region}, Northern Ireland, UK")
-
-        for query in attempts:
-
-            if query in self._geocode_cache:
-                cached = self._geocode_cache[query]
-
-                if cached is None:
-                    continue
-
-                return cached["lat"], cached["lon"]
-
-            lat, lon = self._query_nominatim(query)
-            self._geocode_cache[query] = {"lat": lat, "lon": lon} if lat is not None else None
-            # Persist as we go - geocoding a hundred-plus cameras at ~1
-            # req/sec takes minutes, and an interrupted run shouldn't have
-            # to redo the lookups it already paid for.
-            self._save_geocode_cache()
-
-            if lat is not None:
-                return lat, lon
-
-        return None, None
-
-    def _query_nominatim(self, query: str) -> tuple[Optional[float], Optional[float]]:
-
-        try:
-            # Nominatim's usage policy caps unauthenticated use at ~1
-            # request/second - only hit the network for a real cache miss.
-            time.sleep(self.geocode_delay)
-
-            response = self.session.get(
-                self.geocode_base_url,
-                params={"q": query, "format": "json", "limit": 1},
-                timeout=self.request_timeout,
-            )
-            response.raise_for_status()
-            results = response.json()
-
-        except requests.RequestException as error:
-            self.logger.warning("Geocoding failed for '%s': %s", query, error)
-            return None, None
-
-        if not results:
-            return None, None
-
-        return float(results[0]["lat"]), float(results[0]["lon"])

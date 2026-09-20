@@ -6,5 +6,6 @@ src/config/*.sqlite3-wal
 src/config/traffic_wales_geocode_cache.json
 src/config/northern_ireland_geocode_cache.json
 src/config/traffic_wales_road_cache.json
+src/config/northern_ireland_road_cache.json
 __pycache__/
 *.pyc

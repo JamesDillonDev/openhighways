@@ -49,7 +49,11 @@
       "index_path": "/twni/cameras",
       "request_timeout": 20,
       "geocode_base_url": "https://nominatim.openstreetmap.org/search",
-      "geocode_delay_seconds": 1.0
+      "geocode_delay_seconds": 1.0,
+      "overpass_base_url": "https://overpass-api.de/api/interpreter",
+      "overpass_timeout": 180,
+      "road_bbox": [54.0, -8.2, 55.4, -5.3],
+      "road_snap_max_km": 5.0
     }
   },
   "vehicle_watcher": {
