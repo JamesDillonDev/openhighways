@@ -37,7 +37,12 @@
       "workers": 8,
       "request_timeout": 20,
       "geocode_base_url": "https://nominatim.openstreetmap.org/search",
-      "geocode_delay_seconds": 1.0
+      "geocode_delay_seconds": 1.0,
+      "overpass_base_url": "https://overpass-api.de/api/interpreter",
+      "overpass_timeout": 180,
+      "road_bbox": [51.29, -5.48, 53.44, -2.60],
+      "road_snap_max_km": 5.0,
+      "road_ref_overrides": {"A48M": "A48(M)"}
     },
     "northern_ireland": {
       "base_url": "https://www.trafficwatchni.com",

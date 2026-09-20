@@ -14,7 +14,7 @@ images - the rest of the system never has provider-specific logic in it.
 | -------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
 | `national_highways`  | England strategic road network (M/A roads) | Active - public, unauthenticated                                  |
 | `tfl`                | Greater London (JamCams)                   | Active - public, unauthenticated (optional `TFL_APP_KEY` for a higher rate limit) |
-| `traffic_wales`      | Wales trunk road network                   | Active - public, unauthenticated (coordinates approximated via OpenStreetMap geocoding) |
+| `traffic_wales`      | Wales trunk road network                   | Active - public, unauthenticated (coordinates approximated by geocoding camera names, then snapping them onto the camera's own road) |
 | `northern_ireland`   | Northern Ireland trunk road network        | Active - public, unauthenticated (TrafficWatchNI; coordinates approximated via OpenStreetMap geocoding) |
 | `traffic_scotland`   | Scotland trunk road network                | Not yet active - Traffic Scotland's camera feed requires approved-subscriber FTP access (see `src/sources/traffic_scotland.py`) |
 
@@ -175,6 +175,10 @@ one section per source under `sources`, plus `vehicle_watcher` and `api`.
 | `sources.traffic_wales`           | `base_url`/`index_path` | Road-cameras index page                              |
 | `sources.traffic_wales`           | `geocode_base_url`    | Nominatim endpoint used to approximate coordinates     |
 | `sources.traffic_wales`           | `geocode_delay_seconds` | Delay between geocoding requests (rate-limit friendly) |
+| `sources.traffic_wales`           | `overpass_base_url`   | Overpass endpoint road geometry is fetched from        |
+| `sources.traffic_wales`           | `road_bbox`           | Bounding box road geometry is searched within          |
+| `sources.traffic_wales`           | `road_snap_max_km`    | Geocodes further than this from the road are discarded |
+| `sources.traffic_wales`           | `road_ref_overrides`  | Road names traffic.wales and OSM spell differently     |
 | `sources.traffic_scotland`        | `ftp_host`/`ftp_directory` | FTP feed location (credentials via env vars)       |
 | `vehicle_watcher`                 | `interval_seconds`    | How often to re-check every camera (seconds)           |
 | `vehicle_watcher`                 | `workers`             | Concurrent threads used for fetching images             |
