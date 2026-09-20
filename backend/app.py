@@ -68,6 +68,16 @@ def _run_background_tasks() -> None:
     from sources import load_sources
 
     def sync_once():
+        # When a source changes how it locates its cameras, the rows already
+        # on the volume are stale and nothing above will notice - the table
+        # isn't empty, so the sync is skipped forever. Naming those sources
+        # here re-syncs just them on the next boot.
+        forced = [
+            name.strip()
+            for name in os.environ.get("FORCE_STARTUP_SYNC", "").split(",")
+            if name.strip()
+        ]
+
         # A restart/redeploy shouldn't force a fresh multi-minute National
         # Highways ID-range scan if the (persistent-volume) database
         # already has cameras in it - only sync when the table is empty,
@@ -78,12 +88,15 @@ def _run_background_tasks() -> None:
         finally:
             conn.close()
 
-        if existing > 0:
+        if existing > 0 and not forced:
             app.logger.info("Database already has %d camera(s) - skipping startup sync", existing)
             return
 
         try:
-            MasterPipeline(load_sources()).run()
+            if forced:
+                app.logger.info("FORCE_STARTUP_SYNC set - re-syncing %s", ", ".join(forced))
+
+            MasterPipeline(load_sources(forced or None)).run()
         except Exception:
             app.logger.exception("Background source sync failed")
 

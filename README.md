@@ -179,6 +179,7 @@ one section per source under `sources`, plus `vehicle_watcher` and `api`.
 | `sources.traffic_wales`           | `road_bbox`           | Bounding box road geometry is searched within          |
 | `sources.traffic_wales`           | `road_snap_max_km`    | Geocodes further than this from the road are discarded |
 | `sources.traffic_wales`           | `road_ref_overrides`  | Road names traffic.wales and OSM spell differently     |
+| `sources.northern_ireland`        | `junction_search_km`  | How far around a street to look for its crossing       |
 | `sources.traffic_scotland`        | `ftp_host`/`ftp_directory` | FTP feed location (credentials via env vars)       |
 | `vehicle_watcher`                 | `interval_seconds`    | How often to re-check every camera (seconds)           |
 | `vehicle_watcher`                 | `workers`             | Concurrent threads used for fetching images             |
@@ -221,6 +222,17 @@ is mounted at `/app/src/config` for the SQLite database, camera image cache
 and geocode caches - like Render's disks, Fly volumes only attach to one
 Machine, which is why everything runs together here rather than as
 separate services.
+
+The startup sync only runs when the database is empty, so a redeploy won't
+re-scan a volume that already has cameras. When a source changes *where* it
+puts its cameras, though, those existing rows are stale and nothing will
+notice. Name the affected sources in `FORCE_STARTUP_SYNC` to re-sync just
+those on the next boot, and clear it once it has run:
+
+```bash
+fly secrets set FORCE_STARTUP_SYNC=traffic_wales,northern_ireland
+fly secrets unset FORCE_STARTUP_SYNC
+```
 
 ```powershell
 fly launch --no-deploy   # first time only - creates the app, skips auto-deploy
