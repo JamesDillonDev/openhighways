@@ -13,7 +13,7 @@ const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.5.3'
+const APP_VERSION = 'v1.5.4'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
@@ -353,13 +353,43 @@ function TrafficHistory({ cameraId }) {
 
   const width = 260
   const height = 60
-  const values = points.map((point) => point.v)
+
+  // A null count means the camera was unavailable at that point (showing a
+  // placeholder or a blank frame) - drawn as a shaded gap in the line, never
+  // as a zero.
+  const values = points.map((point) => point.v).filter((v) => v !== null)
+
+  if (values.length === 0) {
+    return <p className="history-empty">No readings - the camera has been unavailable.</p>
+  }
+
   const max = Math.max(...values, 1)
 
   const xForIndex = (i) => (i / (points.length - 1)) * width
   const yForValue = (v) => height - (v / max) * height
 
-  const coords = points.map((point, i) => `${xForIndex(i).toFixed(1)},${yForValue(point.v).toFixed(1)}`)
+  const segments = []
+  const gaps = []
+  let run = []
+
+  points.forEach((point, i) => {
+    if (point.v === null) {
+      if (run.length) segments.push(run)
+      run = []
+
+      const previous = gaps[gaps.length - 1]
+      if (previous && previous.end === i - 1) previous.end = i
+      else gaps.push({ start: i, end: i })
+    } else {
+      run.push(`${xForIndex(i).toFixed(1)},${yForValue(point.v).toFixed(1)}`)
+    }
+  })
+
+  if (run.length) segments.push(run)
+
+  // Each gap is shaded half a step either side of its points, so a single
+  // unavailable reading still shows up as a visible band.
+  const halfStep = width / (points.length - 1) / 2
 
   const setHoverFromClientX = (clientX, rect) => {
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
@@ -389,7 +419,21 @@ function TrafficHistory({ cameraId }) {
         onTouchMove={handleTouchMove}
         onTouchEnd={() => setHoverIndex(null)}
       >
-        <polyline points={coords.join(' ')} />
+        {gaps.map((gap) => (
+          <rect
+            key={gap.start}
+            className="history-gap"
+            x={Math.max(0, xForIndex(gap.start) - halfStep)}
+            width={Math.min(width, xForIndex(gap.end) + halfStep) - Math.max(0, xForIndex(gap.start) - halfStep)}
+            y={0}
+            height={height}
+          />
+        ))}
+        {segments.map((segment) =>
+          segment.length > 1
+            ? <polyline key={segment[0]} points={segment.join(' ')} />
+            : <circle key={segment[0]} className="history-point" cx={segment[0].split(',')[0]} cy={segment[0].split(',')[1]} r={1.5} />
+        )}
         {hovered && (
           <>
             <line
@@ -399,12 +443,14 @@ function TrafficHistory({ cameraId }) {
               y1={0}
               y2={height}
             />
-            <circle
-              className="history-hover-dot"
-              cx={xForIndex(hoverIndex)}
-              cy={yForValue(hovered.v)}
-              r={3}
-            />
+            {hovered.v !== null && (
+              <circle
+                className="history-hover-dot"
+                cx={xForIndex(hoverIndex)}
+                cy={yForValue(hovered.v)}
+                r={3}
+              />
+            )}
           </>
         )}
       </svg>
@@ -420,7 +466,9 @@ function TrafficHistory({ cameraId }) {
             transform: `translate(-${(xForIndex(hoverIndex) / width) * 100}%, -100%)`,
           }}
         >
-          <strong>{hovered.v}</strong> vehicles at {hovered.t.slice(11, 16)}
+          {hovered.v === null
+            ? <>Camera unavailable at {hovered.t.slice(11, 16)}</>
+            : <><strong>{hovered.v}</strong> vehicles at {hovered.t.slice(11, 16)}</>}
         </div>
       )}
 

@@ -190,9 +190,10 @@ CAMERA_SCHEMA = {
             "description": (
                 "Vehicles counted in this camera's most recent image by the "
                 "detector. Null until the watcher has processed the camera at "
-                "least once, or if its feed couldn't be read. A count of `0` means "
-                "an image was read and no vehicles were found in it - that is not "
-                "the same as null."
+                "least once, or when the camera is unavailable - its feed is "
+                "showing the provider's \"unavailable\" card or a blank frame "
+                "instead of footage. A count of `0` means an image was read and "
+                "no vehicles were found in it - that is not the same as null."
             ),
             "example": 7,
         },
@@ -242,7 +243,11 @@ HISTORY_POINT_SCHEMA = {
         "v": {
             "type": "integer",
             "nullable": True,
-            "description": "Vehicles counted, or null if that image couldn't be read.",
+            "description": (
+                "Vehicles counted, or null if the camera was unavailable at that "
+                "time (showing a placeholder card or a blank frame) - a gap in "
+                "the camera's data, not a reading of zero."
+            ),
             "example": 7,
         },
     },

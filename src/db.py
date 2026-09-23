@@ -350,11 +350,13 @@ def record_vehicle_observation(
         (master_id, master_id, keep_history),
     )
 
-    if vehicle_count is not None:
-        conn.execute(
-            "UPDATE cameras SET vehicles = ?, updated_at = ? WHERE master_id = ?",
-            (vehicle_count, timestamp, master_id),
-        )
+    # A null count is written through too: it means the camera was
+    # unavailable this time, and must clear the old count rather than
+    # leave the map showing traffic from before it went down.
+    conn.execute(
+        "UPDATE cameras SET vehicles = ?, updated_at = ? WHERE master_id = ?",
+        (vehicle_count, timestamp, master_id),
+    )
 
     conn.commit()
 

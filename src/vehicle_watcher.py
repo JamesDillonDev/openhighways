@@ -125,40 +125,72 @@ def _is_placeholder(image_bytes: bytes) -> bool:
     return _hash_bytes(image_bytes) in PLACEHOLDER_HASHES
 
 
+# Not every dead feed is a fixed image that can be hashed. National
+# Highways cameras that are down often serve a solid frame - blue, black,
+# green or grey - still stamped with a live timestamp, so the bytes change
+# every fetch; TfL's "Camera ... offline" / "... in use keeping London
+# moving" cards carry the camera's own number. These thresholds come from
+# a sample of 600 live frames, where every frame they flag was a dead feed:
+# the flattest real footage (a camera pointed at the sky) scored 0.877.
+FLAT_TOLERANCE = 12
+BLANK_FRAME_FLATNESS = 0.94
+# A dark scene is naturally flat - a motorway at night is mostly black -
+# so a black frame has to be almost perfectly uniform to count as dead.
+DARK_BRIGHTNESS = 40
+BLANK_DARK_FRAME_FLATNESS = 0.985
+# TfL's cards are exact mid-grey with white text over ~15-20% of them.
+GREY_CARD_LEVEL = 128
+GREY_CARD_FLATNESS = 0.80
+
+
+def _is_blank_frame(frame: np.ndarray) -> bool:
+    """True when a decoded frame is a dead feed rather than footage: one
+    flat colour filling nearly all of it, or TfL's grey status card."""
+
+    # Downscaled with area averaging, so JPEG noise and the small text
+    # overlays can't break up an otherwise flat frame.
+    small = cv2.resize(frame, (160, 128), interpolation=cv2.INTER_AREA).astype(np.int16)
+    median = np.median(small.reshape(-1, 3), axis=0)
+    flatness = np.all(np.abs(small - median) <= FLAT_TOLERANCE, axis=2).mean()
+
+    if median.max() < DARK_BRIGHTNESS:
+        return flatness >= BLANK_DARK_FRAME_FLATNESS
+
+    if flatness >= BLANK_FRAME_FLATNESS:
+        return True
+
+    return bool(np.all(np.abs(median - GREY_CARD_LEVEL) <= 3) and flatness >= GREY_CARD_FLATNESS)
+
+
 def _process_image(conn, camera: CameraRecord, image_bytes: bytes, detector: VehicleDetector, keep_snapshot: bool) -> bool:
-    """Count one fetched image - or, for a placeholder, clear the camera's
-    count so the map shows it grey (no data) rather than keeping whatever
-    colour it had before it went down. Placeholders add no history point:
-    the chart shows a gap, not a dip to zero."""
+    """Count one fetched image and record it. Never called concurrently
+    with itself - OpenCV isn't safe to hammer from many threads at once.
 
-    if _is_placeholder(image_bytes):
-        db.set_vehicle_count(conn, camera.master_id, None)
-        return False
+    A camera showing a placeholder or a dead frame is recorded too, with a
+    null count: the camera goes grey on the map (no data) rather than
+    keeping whatever colour it had before it went down, and its history
+    keeps a row saying it was unavailable at that time - a gap in the
+    chart, not a dip to zero.
 
-    return _analyse_and_save(conn, camera, image_bytes, detector, keep_snapshot=keep_snapshot)
+    With keep_snapshot=False the image is only ever held in memory and then
+    dropped - nothing is written to disk. Placeholders are never kept."""
 
+    frame = None
+    unavailable = _is_placeholder(image_bytes)
 
-def _analyse_and_save(
-    conn,
-    camera: CameraRecord,
-    image_bytes: bytes,
-    detector: VehicleDetector,
-    keep_snapshot: bool = True,
-) -> bool:
-    """Decode + analyse one image and write the result. Never called
-    concurrently with itself - OpenCV isn't safe to hammer from many
-    threads at once.
+    if not unavailable:
+        frame = _decode_frame(image_bytes)
 
-    With keep_snapshot=False the image is only ever held in memory for the
-    detector and then dropped - nothing is written to disk."""
+        if frame is None:
+            return False
 
-    frame = _decode_frame(image_bytes)
+        unavailable = _is_blank_frame(frame)
 
-    if frame is None:
-        return False
-
-    local_path = _save_snapshot(camera.master_id, image_bytes) if keep_snapshot else None
-    vehicle_count = detector.count_vehicles(frame)
+    if unavailable:
+        vehicle_count, local_path = None, None
+    else:
+        local_path = _save_snapshot(camera.master_id, image_bytes) if keep_snapshot else None
+        vehicle_count = detector.count_vehicles(frame)
 
     try:
         db.record_vehicle_observation(
@@ -305,7 +337,7 @@ def main():
 
                 try:
                     updated = run_cycle(conn, sources_by_name, detector, executor)
-                    print(f"[CYCLE] {updated} camera(s) with a fresh vehicle count")
+                    print(f"[CYCLE] {updated} camera(s) recorded")
                 except Exception:
                     # A bad cycle (e.g. a transient DB error) must never kill the
                     # watcher outright - log it and try again next interval.

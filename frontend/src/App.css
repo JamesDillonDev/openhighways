@@ -199,6 +199,15 @@
   stroke-width: 1.5;
 }
 
+/* Stretches where the camera was unavailable - see TrafficHistory. */
+.history-gap {
+  fill: #e5e5e5;
+}
+
+.history-point {
+  fill: #2b6cb0;
+}
+
 .history-hover-line {
   stroke: #999;
   stroke-width: 1;
