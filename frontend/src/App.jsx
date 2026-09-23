@@ -927,33 +927,11 @@ function App() {
 
   return (
     <div className="app">
-      {/* Visually hidden (not display:none, so it's still crawlable/accessible
-          to screen readers) - the map itself has no room for visible prose,
-          but search engines otherwise see nothing but a canvas. */}
-      <section className="visually-hidden">
-        <h1>UK Traffic Cameras</h1>
-        <p>
-          OpenHighways is a free map of traffic cameras across the UK.
-          Browse road cameras to see current road conditions and traffic
-          information from available public camera sources.
-        </p>
-        <h2>UK Road Camera Map</h2>
-        <p>
-          Find traffic cameras across motorways and major roads in the UK.
-          OpenHighways brings camera data from National Highways, Transport
-          for London, Traffic Wales, Traffic Scotland and TrafficWatchNI
-          into one easy-to-use map.
-        </p>
-        <h2>National Highways Traffic Cameras</h2>
-        <p>
-          Explore traffic cameras located on roads managed by National
-          Highways, including major motorways and strategic roads across
-          England.
-        </p>
-      </section>
-
       <div className="top-left-panel">
-        <img className="app-logo" src="/logo.png" alt="OpenHighways" />
+        {/* The page's one heading - the logo's alt text reads as its title. */}
+        <h1 className="app-title">
+          <img className="app-logo" src="/logo.png" alt="OpenHighways" />
+        </h1>
 
         <button
           className="refresh-button"

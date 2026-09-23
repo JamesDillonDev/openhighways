@@ -4,20 +4,6 @@
   width: 100vw;
 }
 
-/* Off-screen but still in the DOM (and readable by screen readers/crawlers) -
-   unlike display:none, this content remains part of the accessibility tree. */
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 .map {
   height: 100%;
   width: 100%;
@@ -265,6 +251,12 @@
   border: 1px solid #ccc;
   border-radius: 6px;
   padding: 10px;
+}
+
+.app-title {
+  display: flex;
+  justify-content: center;
+  margin: 0;
 }
 
 .app-logo {
