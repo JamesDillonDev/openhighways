@@ -14,6 +14,7 @@ import hashlib
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -41,20 +42,25 @@ def _hash_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _load_unavailable_image_hash() -> Optional[str]:
-    """Some providers keep serving a generic placeholder image for cameras
-    that are temporarily down rather than erroring - hash it once so we can
-    skip wasting an OpenCV pass on it every cycle."""
-
-    path = CONFIG_DIR / "unavailable_camera.jpg"
-
-    if not path.exists():
-        return None
-
-    return _hash_bytes(path.read_bytes())
+# Bundled with the code rather than in CONFIG_DIR: Fly and docker-compose
+# mount their data volume over src/config, which would hide anything
+# shipped there.
+PLACEHOLDER_DIR = Path(__file__).parent / "placeholders"
 
 
-UNAVAILABLE_IMAGE_HASH = _load_unavailable_image_hash()
+def _load_placeholder_hashes() -> set[str]:
+    """Providers serve a stock image instead of erroring when a camera is
+    down - National Highways' "unavailable" card, Traffic Scotland's
+    "Currently Unavailable" and "In Operational Use" (the latter byte-for-
+    byte identical across every camera showing it). Hash every one in
+    PLACEHOLDER_DIR once, so each cycle can spot them without an OpenCV
+    pass - there's nothing to count, and a count of the graphic itself
+    would colour the map as if it were traffic."""
+
+    return {_hash_bytes(path.read_bytes()) for path in PLACEHOLDER_DIR.glob("*.jpg")}
+
+
+PLACEHOLDER_HASHES = _load_placeholder_hashes()
 
 
 def _decode_frame(image_bytes: bytes) -> Optional[np.ndarray]:
@@ -110,18 +116,26 @@ def _fetch_batch(
         if not image_bytes:
             continue
 
-        # A generic "camera unavailable" placeholder isn't worth an
-        # OpenCV pass - there's nothing to count.
-        if _is_unavailable_placeholder(image_bytes):
-            continue
-
         fetched.append((camera, image_bytes))
 
     return fetched
 
 
-def _is_unavailable_placeholder(image_bytes: bytes) -> bool:
-    return UNAVAILABLE_IMAGE_HASH is not None and _hash_bytes(image_bytes) == UNAVAILABLE_IMAGE_HASH
+def _is_placeholder(image_bytes: bytes) -> bool:
+    return _hash_bytes(image_bytes) in PLACEHOLDER_HASHES
+
+
+def _process_image(conn, camera: CameraRecord, image_bytes: bytes, detector: VehicleDetector, keep_snapshot: bool) -> bool:
+    """Count one fetched image - or, for a placeholder, clear the camera's
+    count so the map shows it grey (no data) rather than keeping whatever
+    colour it had before it went down. Placeholders add no history point:
+    the chart shows a gap, not a dip to zero."""
+
+    if _is_placeholder(image_bytes):
+        db.set_vehicle_count(conn, camera.master_id, None)
+        return False
+
+    return _analyse_and_save(conn, camera, image_bytes, detector, keep_snapshot=keep_snapshot)
 
 
 def _analyse_and_save(
@@ -197,10 +211,10 @@ def _run_streamed_source(conn, source: Source, cameras: list[CameraRecord], dete
 
         camera = by_internal_id.get(internal_id)
 
-        if camera is None or _is_unavailable_placeholder(image_bytes):
+        if camera is None:
             continue
 
-        if _analyse_and_save(conn, camera, image_bytes, detector, keep_snapshot=source.keep_snapshots):
+        if _process_image(conn, camera, image_bytes, detector, source.keep_snapshots):
             updated += 1
 
     print(f"[BATCH] {source.name}: {updated}/{len(cameras)} cameras processed")
@@ -250,7 +264,7 @@ def run_cycle(
         fetched = _fetch_batch(executor, batch)
 
         for camera, image_bytes in fetched:
-            if _analyse_and_save(conn, camera, image_bytes, detector, keep_snapshot=due[camera.source].keep_snapshots):
+            if _process_image(conn, camera, image_bytes, detector, due[camera.source].keep_snapshots):
                 updated += 1
 
         print(f"[BATCH] {min(start + batch_size, len(fetch_targets))}/{len(fetch_targets)} cameras processed")

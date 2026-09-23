@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { MapContainer, TileLayer, CircleMarker, Popup, ZoomControl, useMap } from 'react-leaflet'
+import { createPortal, flushSync } from 'react-dom'
+import { createRoot } from 'react-dom/client'
+import { MapContainer, TileLayer, Marker, Popup, ZoomControl, useMap } from 'react-leaflet'
+import L from 'leaflet'
+import { IoCameraOutline } from 'react-icons/io5'
 import { locate } from 'leaflet.locatecontrol'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.locatecontrol/dist/L.Control.Locate.min.css'
@@ -10,7 +13,7 @@ const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.5.0'
+const APP_VERSION = 'v1.5.1'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
@@ -21,6 +24,25 @@ const SOURCE_LABELS = {
   traffic_scotland: 'Traffic Scotland',
   traffic_wales: 'Traffic Wales',
   northern_ireland: 'Traffic Watch NI',
+}
+
+// The map's filter list names regions rather than providers - a visitor
+// cares where the cameras are, not who runs them (the camera panel and
+// credits still name the provider). Listed in display order; any source
+// missing here falls to the end under its provider label.
+const REGION_LABELS = {
+  national_highways: 'England',
+  traffic_scotland: 'Scotland',
+  tfl: 'London',
+  traffic_wales: 'Wales',
+  northern_ireland: 'Northern Ireland',
+}
+
+const REGION_ORDER = Object.keys(REGION_LABELS)
+
+function regionRank(source) {
+  const index = REGION_ORDER.indexOf(source)
+  return index === -1 ? REGION_ORDER.length : index
 }
 
 // Each provider sets its own terms for reuse, and several specify the exact
@@ -49,7 +71,6 @@ const SOURCE_CREDITS = [
   {
     source: 'traffic_scotland',
     href: 'https://www.traffic.gov.scot/',
-    logo: '/logos/traffic_scotland_full.png',
     lines: ['Traffic camera images supplied by Traffic Scotland.'],
   },
   {
@@ -155,6 +176,47 @@ function trafficColor(vehicles) {
   )
 
   return `rgb(${rgb.join(',')})`
+}
+
+// Leaflet markers are plain DOM, not React, so the icon is rendered to an
+// SVG string once and shared by every marker. Rendered into a detached
+// element rather than with react-dom/server, which would add ~200 KB to
+// the bundle for this one string.
+function renderIconSvg(icon) {
+  const container = document.createElement('div')
+  const root = createRoot(container)
+
+  flushSync(() => root.render(icon))
+
+  const svg = container.innerHTML
+  root.unmount()
+
+  return svg
+}
+
+const CAMERA_ICON_SVG = renderIconSvg(<IoCameraOutline aria-hidden="true" />)
+const MARKER_SIZE = 22
+
+// One divIcon per colour rather than per camera - vehicle counts are whole
+// numbers, so there are only a dozen or so distinct colours across
+// thousands of markers.
+const markerIcons = new Map()
+
+function markerIcon(color) {
+  let icon = markerIcons.get(color)
+
+  if (!icon) {
+    icon = L.divIcon({
+      className: 'camera-marker',
+      html: `<span class="camera-marker-dot" style="background-color:${color}">${CAMERA_ICON_SVG}</span>`,
+      iconSize: [MARKER_SIZE, MARKER_SIZE],
+      iconAnchor: [MARKER_SIZE / 2, MARKER_SIZE / 2],
+      popupAnchor: [0, -MARKER_SIZE / 2],
+    })
+    markerIcons.set(color, icon)
+  }
+
+  return icon
 }
 
 function TrafficHistory({ cameraId }) {
@@ -406,9 +468,7 @@ function SourceCredits() {
             <div key={credit.source}>
               <dt>
                 <a href={credit.href} target="_blank" rel="noreferrer">
-                  {credit.logo
-                    ? <img className="credit-logo" src={credit.logo} alt={CREDIT_LABELS[credit.source]} />
-                    : CREDIT_LABELS[credit.source]}
+                  {CREDIT_LABELS[credit.source]}
                 </a>
               </dt>
               <dd>{credit.lines.join(' ')}</dd>
@@ -428,7 +488,9 @@ function App() {
   const [hiddenSources, setHiddenSources] = useState(() => new Set())
 
   const sources = useMemo(
-    () => [...new Set(cameras.map((camera) => camera.source))].sort(),
+    () => [...new Set(cameras.map((camera) => camera.source))].sort(
+      (a, b) => regionRank(a) - regionRank(b) || a.localeCompare(b)
+    ),
     [cameras]
   )
 
@@ -529,7 +591,7 @@ function App() {
         {sources.length > 0 && (
           <div className="source-filter">
             {sources.map((source) => {
-              const label = SOURCE_LABELS[source] || source
+              const label = REGION_LABELS[source] || SOURCE_LABELS[source] || source
 
               return (
                 <label key={source} className="source-filter-item">
@@ -573,20 +635,16 @@ function App() {
         />
 
         {visibleCameras.map((camera) => (
-          <CircleMarker
+          <Marker
             key={camera.id}
-            center={[camera.latitude, camera.longitude]}
-            radius={9}
-            weight={2}
-            color="#2b2b2b"
-            fillColor={trafficColor(camera.vehicles)}
-            fillOpacity={0.9}
+            position={[camera.latitude, camera.longitude]}
+            icon={markerIcon(trafficColor(camera.vehicles))}
             eventHandlers={{
               click: () => setSelected(camera),
             }}
           >
             <Popup>{camera.name || camera.id}</Popup>
-          </CircleMarker>
+          </Marker>
         ))}
       </MapContainer>
 
