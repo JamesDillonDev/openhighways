@@ -9,3 +9,6 @@ src/config/traffic_wales_road_cache.json
 src/config/northern_ireland_road_cache.json
 __pycache__/
 *.pyc
+
+# Local secrets - never commit
+.env

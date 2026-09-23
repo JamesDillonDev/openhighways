@@ -8,3 +8,4 @@ flask
 flask-cors
 flask-swagger-ui
 gunicorn
+python-dotenv

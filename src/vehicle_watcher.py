@@ -112,7 +112,7 @@ def _fetch_batch(
 
         # A generic "camera unavailable" placeholder isn't worth an
         # OpenCV pass - there's nothing to count.
-        if UNAVAILABLE_IMAGE_HASH is not None and _hash_bytes(image_bytes) == UNAVAILABLE_IMAGE_HASH:
+        if _is_unavailable_placeholder(image_bytes):
             continue
 
         fetched.append((camera, image_bytes))
@@ -120,17 +120,30 @@ def _fetch_batch(
     return fetched
 
 
-def _analyse_and_save(conn, camera: CameraRecord, image_bytes: bytes, detector: VehicleDetector) -> bool:
+def _is_unavailable_placeholder(image_bytes: bytes) -> bool:
+    return UNAVAILABLE_IMAGE_HASH is not None and _hash_bytes(image_bytes) == UNAVAILABLE_IMAGE_HASH
+
+
+def _analyse_and_save(
+    conn,
+    camera: CameraRecord,
+    image_bytes: bytes,
+    detector: VehicleDetector,
+    keep_snapshot: bool = True,
+) -> bool:
     """Decode + analyse one image and write the result. Never called
     concurrently with itself - OpenCV isn't safe to hammer from many
-    threads at once."""
+    threads at once.
+
+    With keep_snapshot=False the image is only ever held in memory for the
+    detector and then dropped - nothing is written to disk."""
 
     frame = _decode_frame(image_bytes)
 
     if frame is None:
         return False
 
-    local_path = _save_snapshot(camera.master_id, image_bytes)
+    local_path = _save_snapshot(camera.master_id, image_bytes) if keep_snapshot else None
     vehicle_count = detector.count_vehicles(frame)
 
     try:
@@ -148,6 +161,53 @@ def _analyse_and_save(conn, camera: CameraRecord, image_bytes: bytes, detector: 
     return False
 
 
+#: monotonic time each source was last polled - for sources that set a
+#: poll_interval_seconds longer than the watcher's own cycle
+_last_polled: dict[str, float] = {}
+
+
+def _due_sources(sources_by_name: dict[str, Source]) -> dict[str, Source]:
+    """Sources whose poll_interval_seconds has elapsed since they were last
+    polled - marking them polled now, before fetching, so a slow or failed
+    fetch still counts against the provider's download limit."""
+
+    now = time.monotonic()
+    due = {}
+
+    for name, source in sources_by_name.items():
+
+        last = _last_polled.get(name)
+
+        if last is None or now - last >= source.poll_interval_seconds:
+            _last_polled[name] = now
+            due[name] = source
+
+    return due
+
+
+def _run_streamed_source(conn, source: Source, cameras: list[CameraRecord], detector: VehicleDetector) -> int:
+    """Poll a source that downloads its whole batch over one connection
+    (e.g. Traffic Scotland's FTP, which bans per-image logins), analysing
+    each image as it arrives rather than holding them all in memory."""
+
+    by_internal_id = {camera.internal_id: camera for camera in cameras}
+    updated = 0
+
+    for internal_id, image_bytes in source.iter_latest_images(list(by_internal_id)):
+
+        camera = by_internal_id.get(internal_id)
+
+        if camera is None or _is_unavailable_placeholder(image_bytes):
+            continue
+
+        if _analyse_and_save(conn, camera, image_bytes, detector, keep_snapshot=source.keep_snapshots):
+            updated += 1
+
+    print(f"[BATCH] {source.name}: {updated}/{len(cameras)} cameras processed")
+
+    return updated
+
+
 def run_cycle(
     conn,
     sources_by_name: dict[str, Source],
@@ -155,11 +215,26 @@ def run_cycle(
     executor: ThreadPoolExecutor,
 ) -> int:
 
+    due = _due_sources(sources_by_name)
     cameras = db.list_cameras(conn, active_only=True)
+    updated = 0
+
+    # Sources with a batch downloader are polled over a single connection
+    # each, never fanned out one request per camera.
+    for name, source in due.items():
+
+        if not hasattr(source, "iter_latest_images"):
+            continue
+
+        source_cameras = [camera for camera in cameras if camera.source == name]
+
+        if source_cameras:
+            updated += _run_streamed_source(conn, source, source_cameras, detector)
+
     fetch_targets = [
-        (camera, sources_by_name[camera.source])
+        (camera, due[camera.source])
         for camera in cameras
-        if camera.source in sources_by_name
+        if camera.source in due and not hasattr(due[camera.source], "iter_latest_images")
     ]
 
     # Process in batches rather than fetching every camera before analysing
@@ -168,7 +243,6 @@ def run_cycle(
     # before a single result is written, which looks like the watcher has
     # stalled. Batching means results (and map colours) stream in steadily.
     batch_size = max(WORKERS * 2, 1)
-    updated = 0
 
     for start in range(0, len(fetch_targets), batch_size):
 
@@ -176,7 +250,7 @@ def run_cycle(
         fetched = _fetch_batch(executor, batch)
 
         for camera, image_bytes in fetched:
-            if _analyse_and_save(conn, camera, image_bytes, detector):
+            if _analyse_and_save(conn, camera, image_bytes, detector, keep_snapshot=due[camera.source].keep_snapshots):
                 updated += 1
 
         print(f"[BATCH] {min(start + batch_size, len(fetch_targets))}/{len(fetch_targets)} cameras processed")

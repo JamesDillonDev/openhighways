@@ -23,6 +23,14 @@ class Source(ABC):
     #: stable key stored in the database's `source` column - set by subclasses
     name: str = ""
 
+    #: whether the vehicle watcher may keep this source's latest image on
+    #: disk - False for sources whose terms only allow fetching on demand
+    keep_snapshots: bool = True
+
+    #: minimum seconds between vehicle watcher polls of this source (0 =
+    #: every cycle) - for providers that limit how often you may download
+    poll_interval_seconds: float = 0
+
     def __init__(self) -> None:
 
         if not self.name:

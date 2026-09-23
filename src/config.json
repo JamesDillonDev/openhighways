@@ -26,9 +26,11 @@
       "request_timeout": 15
     },
     "traffic_scotland": {
-      "ftp_host": "",
-      "ftp_directory": "/",
-      "request_timeout": 30
+      "ftp_host": "ftp.traffic-scotland.co.uk",
+      "camera_list": "cameraimages.csv",
+      "image_directory": "current",
+      "request_timeout": 30,
+      "poll_interval_seconds": 600
     },
     "traffic_wales": {
       "base_url": "https://traffic.wales",

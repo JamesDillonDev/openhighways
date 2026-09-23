@@ -385,3 +385,11 @@
 .source-credits-detail a {
   color: #444;
 }
+
+/* Traffic Scotland's terms require its logo, not just its name, alongside
+   the credit. */
+.credit-logo {
+  display: block;
+  height: 24px;
+  width: auto;
+}

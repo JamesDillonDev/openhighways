@@ -1,7 +1,14 @@
 import json
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 _SRC_DIR = Path(__file__).parent
+
+# Secrets (e.g. Traffic Scotland's FTP login) live in a gitignored .env at
+# the repo root for local runs. Real environment variables win, so hosts
+# that inject secrets themselves (Fly secrets, compose env_file) still work.
+load_dotenv(_SRC_DIR.parent / ".env", override=False)
 
 with open(
     _SRC_DIR / "config.json",

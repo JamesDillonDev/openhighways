@@ -10,7 +10,7 @@ const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.4.1'
+const APP_VERSION = 'v1.5.0'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
@@ -45,6 +45,12 @@ const SOURCE_CREDITS = [
       'Contains OS data \u00a9 Crown copyright and database rights 2016.',
       'Geomni UK Map data \u00a9 and database rights [2019].',
     ],
+  },
+  {
+    source: 'traffic_scotland',
+    href: 'https://www.traffic.gov.scot/',
+    logo: '/logos/traffic_scotland_full.png',
+    lines: ['Traffic camera images supplied by Traffic Scotland.'],
   },
   {
     source: 'traffic_wales',
@@ -400,7 +406,9 @@ function SourceCredits() {
             <div key={credit.source}>
               <dt>
                 <a href={credit.href} target="_blank" rel="noreferrer">
-                  {CREDIT_LABELS[credit.source]}
+                  {credit.logo
+                    ? <img className="credit-logo" src={credit.logo} alt={CREDIT_LABELS[credit.source]} />
+                    : CREDIT_LABELS[credit.source]}
                 </a>
               </dt>
               <dd>{credit.lines.join(' ')}</dd>

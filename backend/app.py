@@ -1,5 +1,8 @@
 import os
 import sys
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 
@@ -36,6 +39,19 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 IMAGE_PROXY_HEADERS = {
     "northern_ireland": {"Referer": "https://www.trafficwatchni.com/twni/cameras"},
 }
+
+# Sources with no URL at all - Traffic Scotland's images sit behind an FTP
+# login - so they're fetched through the Source itself, only when someone
+# actually opens that camera. Nothing is written to disk.
+IMAGE_VIA_SOURCE = {"traffic_scotland"}
+
+# ...but the map re-requests an open camera's image every second, and each
+# fetch is a whole FTP login - which Traffic Scotland's server bans for.
+# Their images only refresh every 5-10 minutes anyway, so the last copy of
+# each image someone has actually viewed is kept in memory for a few
+# minutes. Bounded, so it never grows towards "a copy of every camera".
+SOURCE_IMAGE_TTL_SECONDS = 300
+SOURCE_IMAGE_CACHE_MAX = 50
 
 # Where the interactive docs live, and where they read their spec from.
 # Both are under /api/ so they survive the frontend catch-all route below.
@@ -91,6 +107,15 @@ app.register_blueprint(
 # Reused across requests instead of a fresh requests.get() each time - avoids
 # re-paying a TLS handshake to the upstream CDN on every single image poll.
 _image_proxy_session = requests.Session()
+
+# (source, internal_id) -> (fetched_at, image bytes), oldest first.
+_source_image_cache: "OrderedDict[tuple[str, str], tuple[float, bytes]]" = OrderedDict()
+
+# One fetch at a time: gunicorn serves requests on several threads, and
+# several viewers opening the same camera together must cost one login,
+# not one each. Built lazily - importing sources pulls in pyproj/shapely.
+_source_image_lock = threading.Lock()
+_image_sources = {}
 
 # Ensure the schema exists even if sync_sources.py hasn't been run yet.
 _startup_conn = db.get_connection()
@@ -169,7 +194,7 @@ def _camera_dict(record):
     data = asdict(record)
     data["id"] = data.pop("master_id")
 
-    if data["source"] in IMAGE_PROXY_HEADERS:
+    if data["source"] in IMAGE_PROXY_HEADERS or data["source"] in IMAGE_VIA_SOURCE:
         data["image_url"] = f"/api/cameras/{data['id']}/image"
 
     return data
@@ -227,7 +252,13 @@ def get_camera_image(master_id):
     finally:
         conn.close()
 
-    if record is None or not record.image_url:
+    if record is None:
+        return "", 404
+
+    if record.source in IMAGE_VIA_SOURCE:
+        return _get_source_image(record)
+
+    if not record.image_url:
         return "", 404
 
     headers = {"User-Agent": USER_AGENT, **IMAGE_PROXY_HEADERS.get(record.source, {})}
@@ -239,6 +270,42 @@ def get_camera_image(master_id):
         return "", 502
 
     return Response(upstream.content, content_type=upstream.headers.get("Content-Type", "image/jpeg"))
+
+
+def _get_source_image(record):
+    """Fetch a camera's image through its Source, on demand, via the short
+    in-memory cache described at SOURCE_IMAGE_TTL_SECONDS."""
+
+    key = (record.source, record.internal_id)
+
+    with _source_image_lock:
+
+        cached = _source_image_cache.get(key)
+
+        if cached is None or time.monotonic() - cached[0] > SOURCE_IMAGE_TTL_SECONDS:
+
+            source = _image_sources.get(record.source)
+
+            if source is None:
+                from sources import AVAILABLE_SOURCES
+                source = _image_sources[record.source] = AVAILABLE_SOURCES[record.source]()
+
+            image_bytes = source.get_latest_image(record.internal_id)
+
+            if not image_bytes:
+                # Serve the stale copy rather than nothing, if there is one.
+                if cached is None:
+                    return "", 502
+            else:
+                cached = (time.monotonic(), image_bytes)
+                _source_image_cache[key] = cached
+
+                while len(_source_image_cache) > SOURCE_IMAGE_CACHE_MAX:
+                    _source_image_cache.popitem(last=False)
+
+        _source_image_cache.move_to_end(key)
+
+    return Response(cached[1], content_type="image/jpeg")
 
 
 if FRONTEND_DIST.is_dir():

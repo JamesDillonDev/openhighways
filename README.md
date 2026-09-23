@@ -16,7 +16,7 @@ images - the rest of the system never has provider-specific logic in it.
 | `tfl`                | Greater London (JamCams)                   | Active - public, unauthenticated (optional `TFL_APP_KEY` for a higher rate limit) |
 | `traffic_wales`      | Wales trunk road network                   | Active - public, unauthenticated (coordinates approximated by geocoding camera names, then snapping them onto the camera's own road) |
 | `northern_ireland`   | Northern Ireland trunk road network        | Active - public, unauthenticated (TrafficWatchNI; coordinates approximated via OpenStreetMap geocoding) |
-| `traffic_scotland`   | Scotland trunk road network                | Not yet active - Traffic Scotland's camera feed requires approved-subscriber FTP access (see `src/sources/traffic_scotland.py`) |
+| `traffic_scotland`   | Scotland trunk road network                | Approved-subscriber FTP (LEV service) - needs `TRAFFIC_SCOTLAND_FTP_USER`/`TRAFFIC_SCOTLAND_FTP_PASSWORD` in `.env` or the environment; images are proxied on demand, never stored (see `src/sources/traffic_scotland.py`) |
 
 ## Project structure
 
@@ -36,7 +36,7 @@ src/
     tfl.py                        # Transport for London
     traffic_wales.py               # Traffic Wales
     northern_ireland.py             # TrafficWatchNI (Northern Ireland)
-    traffic_scotland.py             # Traffic Scotland (stub pending subscriber access)
+    traffic_scotland.py             # Traffic Scotland (LEV FTP; placed from cameraimages.csv)
 backend/
   app.py                 # Flask API serving camera data (from the database) to the frontend
   openapi.py              # the API's OpenAPI description, served at /api/docs
@@ -217,7 +217,7 @@ one section per source under `sources`, plus `vehicle_watcher` and `api`.
 | `sources.traffic_wales`           | `road_snap_max_km`    | Geocodes further than this from the road are discarded |
 | `sources.traffic_wales`           | `road_ref_overrides`  | Road names traffic.wales and OSM spell differently     |
 | `sources.northern_ireland`        | `junction_search_km`  | How far around a street to look for its crossing       |
-| `sources.traffic_scotland`        | `ftp_host`/`ftp_directory` | FTP feed location (credentials via env vars)       |
+| `sources.traffic_scotland`        | `ftp_host`/`camera_list`/`image_directory`/`poll_interval_seconds` | FTP feed location and watcher poll rate (never below 600s; credentials via env vars) |
 | `vehicle_watcher`                 | `interval_seconds`    | How often to re-check every camera (seconds)           |
 | `vehicle_watcher`                 | `workers`             | Concurrent threads used for fetching images             |
 | `vehicle_watcher`                 | `input_size`          | Detector input resolution (smaller = faster, less accurate) |
@@ -280,6 +280,13 @@ keep running even when there's no HTTP traffic, so the Machine can't be
 allowed to idle-stop the way a typical stateless web app would. Optionally
 set `TFL_APP_KEY` and/or the Traffic Scotland FTP credentials with
 `fly secrets set TFL_APP_KEY=...` (secrets, not `[env]` in `fly.toml`).
+Locally they go in a gitignored `.env` at the repo root, which
+`src/config.py` loads and `docker-compose.yml` passes through.
+
+Traffic Scotland's FTP server auto-bans accounts that log in too often or
+download more than one full set per 10 minutes. That's why the watcher polls
+it over a single session no more than once every 10 minutes, and why the
+image proxy keeps each viewed image in memory for 5 minutes.
 
 **After every `fly deploy`**, verify the Machine actually got the memory
 `[[vm]]` in `fly.toml` specifies - `fly deploy` on an *existing* Machine has

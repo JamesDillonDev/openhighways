@@ -4,6 +4,11 @@ services:
       context: .
       dockerfile: Dockerfile
     command: python backend/app.py
+    env_file:
+      # Secrets such as the Traffic Scotland FTP login - optional, so the
+      # stack still starts without one (that source just stays unconfigured).
+      - path: .env
+        required: false
     volumes:
       - openhighway-data:/app/src/config
     ports:
@@ -15,6 +20,11 @@ services:
       context: .
       dockerfile: Dockerfile
     command: python src/vehicle_watcher.py
+    env_file:
+      # Secrets such as the Traffic Scotland FTP login - optional, so the
+      # stack still starts without one (that source just stays unconfigured).
+      - path: .env
+        required: false
     volumes:
       - openhighway-data:/app/src/config
     depends_on:
@@ -28,6 +38,11 @@ services:
       context: .
       dockerfile: Dockerfile
     command: python src/sync_sources.py
+    env_file:
+      # Secrets such as the Traffic Scotland FTP login - optional, so the
+      # stack still starts without one (that source just stays unconfigured).
+      - path: .env
+        required: false
     volumes:
       - openhighway-data:/app/src/config
     profiles:
