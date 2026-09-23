@@ -5,6 +5,15 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="alternate icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- The backend puts a plain-HTML summary of each page (backend/seo.py)
+         inside #root for crawlers that only read the HTML. The map replaces
+         it as soon as it mounts, so it's never shown - painting it first
+         just flashed a page of links before the map appeared. -->
+    <style>
+      #root > main {
+        display: none;
+      }
+    </style>
     <!-- Replaced per page by the backend (backend/seo.py) - keep these
          markers, and keep everything page-specific between them. -->
     <!--seo-head-->
