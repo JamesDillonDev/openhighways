@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import requests
-from flask import Flask, Response, jsonify, redirect, send_from_directory
+from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 from flask_cors import CORS
 from flask_swagger_ui import get_swaggerui_blueprint
 
@@ -60,6 +60,23 @@ DOCS_URL = "/api/docs"
 OPENAPI_URL = "/api/openapi.json"
 
 app = Flask(__name__)
+
+# Fly's own hostname for the app, from before openhighways.uk. It still
+# reaches this same Machine, so without a redirect every page exists twice.
+LEGACY_HOSTS = {"openhighway.fly.dev"}
+
+
+@app.before_request
+def redirect_legacy_host():
+    """Permanently move the old hostname's pages onto openhighways.uk, so
+    search engines carry anything they indexed there across. The API is
+    left answering on both: scripts calling the old address shouldn't
+    start having to follow redirects."""
+
+    if request.host.split(":")[0] not in LEGACY_HOSTS or request.path.startswith("/api/"):
+        return None
+
+    return redirect(seo.SITE_URL + request.full_path.rstrip("?"), 301)
 
 # Open to any origin, because this is a public, read-only, unauthenticated
 # API and locking it to the map's own origin only stopped other people's
@@ -315,7 +332,7 @@ def _get_source_image(record):
 def get_sitemap():
     """Every camera, road and region page, for search engines."""
 
-    return Response(seo.sitemap_xml(), content_type="application/xml")
+    return Response(seo.sitemap_xml(), content_type="application/xml; charset=utf-8")
 
 
 if FRONTEND_DIST.is_dir():
