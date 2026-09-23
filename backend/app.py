@@ -61,9 +61,9 @@ OPENAPI_URL = "/api/openapi.json"
 
 app = Flask(__name__)
 
-# Fly's own hostname for the app, from before openhighways.uk. It still
-# reaches this same Machine, so without a redirect every page exists twice.
-LEGACY_HOSTS = {"openhighway.fly.dev"}
+# Other hostnames that reach this same Machine - Fly's own, from before
+# openhighways.uk, and www. Without a redirect every page exists twice.
+LEGACY_HOSTS = {"openhighway.fly.dev", "www.openhighways.uk"}
 
 
 @app.before_request
