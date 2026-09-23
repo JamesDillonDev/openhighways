@@ -14,7 +14,7 @@ const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.6.0'
+const APP_VERSION = 'v1.6.1'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
