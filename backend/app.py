@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import requests
-from flask import Flask, Response, jsonify, send_from_directory
+from flask import Flask, Response, jsonify, redirect, send_from_directory
 from flask_cors import CORS
 from flask_swagger_ui import get_swaggerui_blueprint
 
@@ -18,6 +18,7 @@ SRC_DIR = Path(__file__).resolve().parent.parent / "src"
 sys.path.insert(0, str(SRC_DIR))
 
 import db  # noqa: E402
+import seo  # noqa: E402
 from config import USER_AGENT, section  # noqa: E402
 
 API_SETTINGS = section("api")
@@ -308,19 +309,67 @@ def _get_source_image(record):
     return Response(cached[1], content_type="image/jpeg")
 
 
+# Outside the FRONTEND_DIST check below: where nginx serves the frontend
+# instead (docker-compose), it proxies just this path through to here.
+@app.get("/sitemap.xml")
+def get_sitemap():
+    """Every camera, road and region page, for search engines."""
+
+    return Response(seo.sitemap_xml(), content_type="application/xml")
+
+
 if FRONTEND_DIST.is_dir():
 
-    @app.get("/", defaults={"path": ""})
+    def _html(page, status=200):
+        return Response(page, status=status, content_type="text/html; charset=utf-8")
+
+    def _not_found():
+        return _html(seo.not_found_page(FRONTEND_DIST), 404)
+
+    # Each of these is the same map, opened on one camera/road/region - but
+    # with that page's own title, description and links in the HTML, so a
+    # search engine sees thousands of distinct pages rather than one (see
+    # seo.py).
+
+    @app.get("/")
+    def serve_home():
+        return _html(seo.home_page(FRONTEND_DIST))
+
+    @app.get("/camera/<int:master_id>")
+    def serve_camera(master_id):
+        page = seo.camera_page(FRONTEND_DIST, master_id)
+        return _html(page) if page else _not_found()
+
+    @app.get("/road/<road>", defaults={"net": "gb"})
+    @app.get("/road/ni/<road>", defaults={"net": "ni"})
+    def serve_road(road, net):
+        # One URL per road: /road/M25 and /road/m25 are the same page.
+        if road != seo.slugify(road):
+            return redirect(seo.road_path(net, road), 301)
+
+        page = seo.road_page(FRONTEND_DIST, net, road)
+        return _html(page) if page else _not_found()
+
+    @app.get("/region/<region>")
+    def serve_region(region):
+        page = seo.region_page(FRONTEND_DIST, region)
+        return _html(page) if page else _not_found()
+
     @app.get("/<path:path>")
     def serve_frontend(path):
-        """Serve the built frontend from this same process (see
-        Dockerfile.fly) - falls back to index.html for any path that isn't
-        an actual built file, e.g. a browser refresh on the app's root."""
+        """Serve the built frontend's files from this same process (see
+        Dockerfile.fly). Anything else is a real 404 - answering every
+        unknown path with the map and a 200 would make each one look like a
+        duplicate copy of the home page."""
 
-        if path and (FRONTEND_DIST / path).is_file():
+        if (FRONTEND_DIST / path).is_file():
             return send_from_directory(FRONTEND_DIST, path)
 
-        return send_from_directory(FRONTEND_DIST, "index.html")
+        # A missing script or image gets a plain 404, not an HTML page.
+        if "." in path.rsplit("/", 1)[-1]:
+            return "", 404
+
+        return _not_found()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { MapContainer, TileLayer, Popup, ZoomControl, useMap } from 'react-leaflet'
@@ -8,12 +8,13 @@ import { locate } from 'leaflet.locatecontrol'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.locatecontrol/dist/L.Control.Locate.min.css'
 import './App.css'
+import { cameraPath, compareRoads, inRoute, parseRoute, regionPath, roadPath } from './routes.js'
 
 const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.5.4'
+const APP_VERSION = 'v1.6.0'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
@@ -481,7 +482,20 @@ function TrafficHistory({ cameraId }) {
   )
 }
 
-function CameraPanel({ camera, onClose }) {
+// A real link (so it can be crawled, and opened in a new tab), that moves
+// the map without a page load when clicked normally.
+function MapLink({ href, onNavigate, children }) {
+  const handleClick = (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+
+    event.preventDefault()
+    onNavigate(href)
+  }
+
+  return <a href={href} onClick={handleClick}>{children}</a>
+}
+
+function CameraPanel({ camera, onClose, onNavigate }) {
   // Keep rendering the last selected camera's data while closing, so the
   // panel has something to show while it slides out instead of going blank.
   const [displayCamera, setDisplayCamera] = useState(camera)
@@ -561,7 +575,22 @@ function CameraPanel({ camera, onClose }) {
 
       <dl>
         <dt>Road</dt>
-        <dd>{displayCamera.road || '—'}</dd>
+        <dd>
+          {roadPath(displayCamera)
+            ? <MapLink href={roadPath(displayCamera)} onNavigate={onNavigate}>{displayCamera.road}</MapLink>
+            : displayCamera.road || '—'}
+        </dd>
+
+        <dt>Region</dt>
+        <dd>
+          {regionPath(displayCamera.source)
+            ? (
+              <MapLink href={regionPath(displayCamera.source)} onNavigate={onNavigate}>
+                {REGION_LABELS[displayCamera.source]}
+              </MapLink>
+            )
+            : '—'}
+        </dd>
 
         <dt>Direction</dt>
         <dd>{displayCamera.direction || '—'}</dd>
@@ -594,6 +623,150 @@ function CameraPanel({ camera, onClose }) {
       )}
     </aside>
   )
+}
+
+function cameraLabel(camera) {
+  return camera.name || `Camera ${camera.id}`
+}
+
+function byName(a, b) {
+  // numeric, so "M25 9/1A" comes before "M25 10/1A".
+  return cameraLabel(a).localeCompare(cameraLabel(b), undefined, { numeric: true })
+}
+
+// The list for a road or region page - every camera on that road, or every
+// road (and road-less camera) in that region.
+function PlacePanel({ route, cameras, onClose, onNavigate }) {
+  const matches = useMemo(() => cameras.filter((camera) => inRoute(route, camera)), [route, cameras])
+
+  const roads = useMemo(() => {
+    if (route.type !== 'region') return []
+
+    const byRoad = new Map()
+
+    for (const camera of matches) {
+      const path = roadPath(camera)
+      if (!path) continue
+
+      const road = byRoad.get(path) || { path, name: camera.road, count: 0 }
+      road.count += 1
+      byRoad.set(path, road)
+    }
+
+    return [...byRoad.values()].sort((a, b) => compareRoads(a.name, b.name))
+  }, [route, matches])
+
+  if (matches.length === 0) return null
+
+  const title = route.type === 'road'
+    ? `${matches[0].road} traffic cameras`
+    : `${REGION_LABELS[route.source]} traffic cameras`
+
+  // On a road page every camera is listed; on a region page only the ones
+  // no road page covers.
+  const listed = (route.type === 'road' ? matches : matches.filter((camera) => !roadPath(camera))).sort(byName)
+  const focusNavigate = (path) => onNavigate(path, { focus: true })
+
+  return (
+    <aside className="panel panel-open place-panel">
+      <button className="panel-close" onClick={onClose} aria-label="Close">
+        &times;
+      </button>
+
+      <h2>{title}</h2>
+      <p className="place-summary">
+        {matches.length} {matches.length === 1 ? 'camera' : 'cameras'}
+      </p>
+
+      {roads.length > 0 && (
+        <>
+          <h3>Cameras by road</h3>
+          <ul className="place-list">
+            {roads.map((road) => (
+              <li key={road.path}>
+                <MapLink href={road.path} onNavigate={focusNavigate}>{road.name}</MapLink>
+                <span className="place-count">{road.count}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {listed.length > 0 && (
+        <>
+          {route.type === 'region' && <h3>Other cameras</h3>}
+          <ul className="place-list">
+            {listed.map((camera) => (
+              <li key={camera.id}>
+                <MapLink href={cameraPath(camera)} onNavigate={focusNavigate}>{cameraLabel(camera)}</MapLink>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </aside>
+  )
+}
+
+// Moves the map to whatever the URL names - once the cameras have loaded,
+// and again only when `focusKey` changes (arriving from a link or the back
+// button), never on a poll or a plain marker click.
+function MapFocus({ route, cameras, focusKey }) {
+  const map = useMap()
+  const focusedKey = useRef(null)
+
+  useEffect(() => {
+    if (cameras.length === 0 || focusedKey.current === focusKey) return
+
+    const animate = focusedKey.current !== null
+    focusedKey.current = focusKey
+
+    if (route.type === 'camera') {
+      const camera = cameras.find((c) => c.id === route.id)
+
+      if (camera) map.setView([camera.latitude, camera.longitude], Math.max(map.getZoom(), 14), { animate })
+
+      return
+    }
+
+    const matches = cameras.filter((camera) => inRoute(route, camera))
+
+    if (matches.length === 0) return
+
+    map.fitBounds(L.latLngBounds(matches.map((camera) => [camera.latitude, camera.longitude])), {
+      // Leave room for the list panel down the right.
+      paddingTopLeft: [40, 40],
+      paddingBottomRight: [Math.min(360, window.innerWidth / 2), 40],
+      maxZoom: 14,
+      animate,
+    })
+  }, [map, route, cameras, focusKey])
+
+  return null
+}
+
+function pageTitle(route, cameras) {
+  if (route.type === 'camera') {
+    const camera = cameras.find((c) => c.id === route.id)
+    if (camera) return `${cameraLabel(camera)} traffic camera | OpenHighways`
+  }
+
+  if (route.type === 'road') {
+    const camera = cameras.find((c) => inRoute(route, c))
+    if (camera) return `${camera.road} traffic cameras | OpenHighways`
+  }
+
+  if (route.type === 'region') return `${REGION_LABELS[route.source]} traffic cameras | OpenHighways`
+
+  return 'OpenHighways - UK Traffic Cameras'
+}
+
+// Where closing a camera goes back to: the road/region list it was opened
+// from, or the plain map.
+function returnPathFor(route, path) {
+  if (route.type === 'road' || route.type === 'region') return path
+
+  return '/'
 }
 
 // Sits bottom-left, opposite Leaflet's own attribution. Providers require
@@ -639,7 +812,11 @@ function SourceCredits() {
 
 function App() {
   const [cameras, setCameras] = useState([])
-  const [selected, setSelected] = useState(null)
+  // The URL is the source of truth for what's open - /camera/<id>,
+  // /road/<road> or /region/<region> (see routes.js).
+  const [route, setRoute] = useState(() => parseRoute(window.location.pathname))
+  const [focusKey, setFocusKey] = useState(0)
+  const returnPath = useRef(returnPathFor(route, window.location.pathname))
   const [refreshing, setRefreshing] = useState(false)
   const [hiddenSources, setHiddenSources] = useState(() => new Set())
 
@@ -697,14 +874,56 @@ function App() {
     return () => clearInterval(timer)
   }, [])
 
-  // Keep the open panel's data (e.g. vehicle count) fresh as polls come in
+  const showRoute = useCallback((path, focus) => {
+    const next = parseRoute(path)
+
+    if (next.type !== 'camera') returnPath.current = returnPathFor(next, path)
+
+    setRoute(next)
+    if (focus) setFocusKey((key) => key + 1)
+  }, [])
+
+  const navigate = useCallback((path, { focus = false } = {}) => {
+    if (path !== window.location.pathname) window.history.pushState(null, '', path)
+
+    showRoute(path, focus)
+  }, [showRoute])
+
   useEffect(() => {
-    if (!selected) return
+    const handlePopState = () => showRoute(window.location.pathname, true)
 
-    const updated = cameras.find((camera) => camera.id === selected.id)
+    window.addEventListener('popstate', handlePopState)
 
-    if (updated) setSelected(updated)
-  }, [cameras])
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [showRoute])
+
+  // A region whose cameras are filtered off the map is shown again when
+  // its list is opened - otherwise the list names cameras you can't see.
+  const openRegion = (source, path) => {
+    setHiddenSources((prev) => {
+      if (!prev.has(source)) return prev
+
+      const next = new Set(prev)
+      next.delete(source)
+
+      return next
+    })
+
+    navigate(path, { focus: true })
+  }
+
+  const selectCamera = useCallback((camera) => navigate(cameraPath(camera)), [navigate])
+
+  // Looked up in the latest poll each render, so the open panel's data
+  // (e.g. vehicle count) stays fresh.
+  const selected = useMemo(
+    () => (route.type === 'camera' ? cameras.find((camera) => camera.id === route.id) ?? null : null),
+    [route, cameras]
+  )
+
+  useEffect(() => {
+    document.title = pageTitle(route, cameras)
+  }, [route, cameras])
 
   return (
     <div className="app">
@@ -750,15 +969,24 @@ function App() {
               const label = REGION_LABELS[source] || SOURCE_LABELS[source] || source
 
               return (
-                <label key={source} className="source-filter-item">
+                // Only the checkbox toggles the filter - the name opens that
+                // region's list of roads.
+                <div key={source} className="source-filter-item">
                   <input
                     type="checkbox"
+                    aria-label={`Show ${label} cameras`}
                     checked={!hiddenSources.has(source)}
                     onChange={() => toggleSource(source)}
                   />
-                  <span>{label}</span>
+                  {regionPath(source)
+                    ? (
+                      <MapLink href={regionPath(source)} onNavigate={(path) => openRegion(source, path)}>
+                        {label}
+                      </MapLink>
+                    )
+                    : <span>{label}</span>}
                   <span className="source-filter-count">{sourceCounts[source] ?? 0}</span>
-                </label>
+                </div>
               )
             })}
           </div>
@@ -774,6 +1002,8 @@ function App() {
           <a href="/api/docs" target="_blank" rel="noreferrer">API</a>
           <span>&middot;</span>
           <a href={REPO_URL} target="_blank" rel="noreferrer">GitHub</a>
+          <span>&middot;</span>
+          <a href="/sitemap.xml" target="_blank" rel="noreferrer">Sitemap</a>
         </div>
       </div>
 
@@ -790,7 +1020,8 @@ function App() {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        <CameraLayer cameras={visibleCameras} onSelect={setSelected} />
+        <CameraLayer cameras={visibleCameras} onSelect={selectCamera} />
+        <MapFocus route={route} cameras={cameras} focusKey={focusKey} />
 
         {/* One popup that follows the selection, not one bound to every
             marker - thousands of idle Leaflet popups were part of the lag. */}
@@ -807,7 +1038,20 @@ function App() {
 
       <SourceCredits />
 
-      <CameraPanel camera={selected} onClose={() => setSelected(null)} />
+      {(route.type === 'road' || route.type === 'region') && (
+        <PlacePanel
+          route={route}
+          cameras={cameras}
+          onClose={() => navigate('/')}
+          onNavigate={navigate}
+        />
+      )}
+
+      <CameraPanel
+        camera={selected}
+        onClose={() => navigate(returnPath.current)}
+        onNavigate={(path) => navigate(path, { focus: true })}
+      />
     </div>
   )
 }

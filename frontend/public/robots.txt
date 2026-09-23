@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://openhighway.fly.dev/sitemap.xml
+Sitemap: https://openhighways.uk/sitemap.xml
