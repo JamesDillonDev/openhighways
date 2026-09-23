@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
-import { MapContainer, TileLayer, Marker, Popup, ZoomControl, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Popup, ZoomControl, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { IoCameraOutline } from 'react-icons/io5'
 import { locate } from 'leaflet.locatecontrol'
@@ -13,7 +13,7 @@ const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.5.2'
+const APP_VERSION = 'v1.5.3'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
@@ -178,10 +178,11 @@ function trafficColor(vehicles) {
   return `rgb(${rgb.join(',')})`
 }
 
-// Leaflet markers are plain DOM, not React, so the icon is rendered to an
-// SVG string once and shared by every marker. Rendered into a detached
-// element rather than with react-dom/server, which would add ~200 KB to
-// the bundle for this one string.
+// Every camera is drawn onto one shared <canvas> rather than as its own DOM
+// element: with ~5,000 cameras, per-marker DOM (and a React component and
+// Leaflet popup for each) made every zoom and pan crawl. The icon is
+// rendered to an SVG once, rasterised into an <img>, and stamped onto the
+// canvas in the middle of each circle.
 function renderIconSvg(icon) {
   const container = document.createElement('div')
   const root = createRoot(container)
@@ -194,29 +195,130 @@ function renderIconSvg(icon) {
   return svg
 }
 
-const CAMERA_ICON_SVG = renderIconSvg(<IoCameraOutline aria-hidden="true" />)
-const MARKER_SIZE = 22
+const MARKER_RADIUS = 9
+const MARKER_ICON_SIZE = 12
 
-// One divIcon per colour rather than per camera - vehicle counts are whole
-// numbers, so there are only a dozen or so distinct colours across
-// thousands of markers.
-const markerIcons = new Map()
+// Stamped onto the canvas from a pre-rendered bitmap, not the SVG itself:
+// drawing an SVG <img> re-rasterises it on every call, which across ~5,000
+// markers per frame was most of the cost of a zoom. Rendered at the
+// screen's pixel density so the icon stays crisp.
+const cameraIconBitmap = (async () => {
+  const image = new Image()
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+    renderIconSvg(<IoCameraOutline color="#fff" size={MARKER_ICON_SIZE} />)
+  )}`
 
-function markerIcon(color) {
-  let icon = markerIcons.get(color)
+  await image.decode()
 
-  if (!icon) {
-    icon = L.divIcon({
-      className: 'camera-marker',
-      html: `<span class="camera-marker-dot" style="background-color:${color}">${CAMERA_ICON_SVG}</span>`,
-      iconSize: [MARKER_SIZE, MARKER_SIZE],
-      iconAnchor: [MARKER_SIZE / 2, MARKER_SIZE / 2],
-      popupAnchor: [0, -MARKER_SIZE / 2],
-    })
-    markerIcons.set(color, icon)
+  const scale = window.devicePixelRatio || 1
+  const bitmap = document.createElement('canvas')
+  bitmap.width = bitmap.height = Math.ceil(MARKER_ICON_SIZE * scale)
+  bitmap.getContext('2d').drawImage(image, 0, 0, bitmap.width, bitmap.height)
+
+  return bitmap
+})().catch(() => null)
+
+// Set once the bitmap is ready - markers wait for it, or the first frame
+// would paint circles with no icons in them.
+let CAMERA_ICON = null
+
+const CameraDot = L.CircleMarker.extend({
+  _updatePath() {
+    L.CircleMarker.prototype._updatePath.call(this)
+
+    const ctx = this._renderer._ctx
+
+    if (!ctx || !CAMERA_ICON || this._empty()) return
+
+    const { x, y } = this._point
+    const half = MARKER_ICON_SIZE / 2
+
+    ctx.drawImage(CAMERA_ICON, x - half, y - half, MARKER_ICON_SIZE, MARKER_ICON_SIZE)
+  },
+})
+
+function markerStyle(camera) {
+  return {
+    radius: MARKER_RADIUS,
+    weight: 2,
+    color: '#2b2b2b',
+    fillColor: trafficColor(camera.vehicles),
+    fillOpacity: 0.9,
   }
+}
 
-  return icon
+// Owns the camera markers directly in Leaflet rather than as thousands of
+// React children. Each poll updates markers in place - restyling ones that
+// changed, adding new ones, dropping ones that are gone - instead of
+// tearing them all down and rebuilding.
+function CameraLayer({ cameras, onSelect }) {
+  const map = useMap()
+  const [iconReady, setIconReady] = useState(false)
+  const [layer] = useState(() => ({
+    renderer: L.canvas({ padding: 0.5 }),
+    group: L.layerGroup(),
+    dots: new Map(),
+  }))
+
+  useEffect(() => {
+    let cancelled = false
+    cameraIconBitmap.then((bitmap) => {
+      CAMERA_ICON = bitmap
+      if (!cancelled) setIconReady(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    layer.group.addTo(map)
+    return () => {
+      layer.group.remove()
+    }
+  }, [map, layer])
+
+  useEffect(() => {
+    if (!iconReady) return
+
+    const seen = new Set()
+
+    for (const camera of cameras) {
+      seen.add(camera.id)
+
+      let dot = layer.dots.get(camera.id)
+
+      if (!dot) {
+        dot = new CameraDot([camera.latitude, camera.longitude], {
+          ...markerStyle(camera),
+          renderer: layer.renderer,
+        })
+        dot.on('click', () => onSelect(dot.camera))
+        dot.addTo(layer.group)
+        layer.dots.set(camera.id, dot)
+      } else {
+        const style = markerStyle(camera)
+
+        if (dot.options.fillColor !== style.fillColor) dot.setStyle(style)
+
+        const { lat, lng } = dot.getLatLng()
+        if (lat !== camera.latitude || lng !== camera.longitude) {
+          dot.setLatLng([camera.latitude, camera.longitude])
+        }
+      }
+
+      dot.camera = camera
+    }
+
+    for (const [id, dot] of layer.dots) {
+      if (!seen.has(id)) {
+        dot.remove()
+        layer.dots.delete(id)
+      }
+    }
+  }, [cameras, iconReady, layer, onSelect])
+
+  return null
 }
 
 function TrafficHistory({ cameraId }) {
@@ -310,7 +412,13 @@ function TrafficHistory({ cameraId }) {
       {hovered && (
         <div
           className="history-tooltip"
-          style={{ left: `${(xForIndex(hoverIndex) / width) * 100}%` }}
+          style={{
+            left: `${(xForIndex(hoverIndex) / width) * 100}%`,
+            // Slide the label's anchor with the cursor - left-aligned at the
+            // chart's start, centred in the middle, right-aligned at its end -
+            // so it never overhangs the panel, which clips anything outside.
+            transform: `translate(-${(xForIndex(hoverIndex) / width) * 100}%, -100%)`,
+          }}
         >
           <strong>{hovered.v}</strong> vehicles at {hovered.t.slice(11, 16)}
         </div>
@@ -634,18 +742,19 @@ function App() {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {visibleCameras.map((camera) => (
-          <Marker
-            key={camera.id}
-            position={[camera.latitude, camera.longitude]}
-            icon={markerIcon(trafficColor(camera.vehicles))}
-            eventHandlers={{
-              click: () => setSelected(camera),
-            }}
+        <CameraLayer cameras={visibleCameras} onSelect={setSelected} />
+
+        {/* One popup that follows the selection, not one bound to every
+            marker - thousands of idle Leaflet popups were part of the lag. */}
+        {selected && (
+          <Popup
+            key={selected.id}
+            position={[selected.latitude, selected.longitude]}
+            offset={[0, -MARKER_RADIUS]}
           >
-            <Popup>{camera.name || camera.id}</Popup>
-          </Marker>
-        ))}
+            {selected.name || selected.id}
+          </Popup>
+        )}
       </MapContainer>
 
       <SourceCredits />
