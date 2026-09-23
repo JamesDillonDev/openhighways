@@ -10,8 +10,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ backend/
 COPY src/ src/
-COPY render-start.sh .
 
-# Overridden per-service in docker-compose.yml (and by Render's
-# dockerCommand for the combined API+watcher service - see render.yaml).
+# Overridden per-service in docker-compose.yml.
 CMD ["python", "backend/app.py"]

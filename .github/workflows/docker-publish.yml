@@ -26,7 +26,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Docker image names must be lowercase - github.repository keeps the
-      # repo's actual casing (JamesDillonDev/openhighway).
+      # repo's actual casing (JamesDillonDev/openhighways).
       - name: Set lowercase image name
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
