@@ -17,6 +17,7 @@ images - the rest of the system never has provider-specific logic in it.
 | `traffic_wales`      | Wales trunk road network                   | Active - public, unauthenticated (coordinates approximated by geocoding camera names, then snapping them onto the camera's own road) |
 | `northern_ireland`   | Northern Ireland trunk road network        | Active - public, unauthenticated (TrafficWatchNI; coordinates approximated via OpenStreetMap geocoding) |
 | `traffic_scotland`   | Scotland trunk road network                | Approved-subscriber FTP (LEV service) - needs `TRAFFIC_SCOTLAND_FTP_USER`/`TRAFFIC_SCOTLAND_FTP_PASSWORD` in `.env` or the environment; images are proxied on demand, never stored (see `src/sources/traffic_scotland.py`) |
+| `essex`              | Essex county road network                  | Active - public, unauthenticated (Essex Highways; coordinates approximated by geocoding camera names, then snapping them onto the camera's own road) |
 
 ## Project structure
 
@@ -37,6 +38,7 @@ src/
     traffic_wales.py               # Traffic Wales
     northern_ireland.py             # TrafficWatchNI (Northern Ireland)
     traffic_scotland.py             # Traffic Scotland (LEV FTP; placed from cameraimages.csv)
+    essex.py                        # Essex Highways
 backend/
   app.py                 # Flask API serving camera data (from the database) to the frontend
   openapi.py              # the API's OpenAPI description, served at /api/docs
@@ -218,6 +220,7 @@ one section per source under `sources`, plus `vehicle_watcher` and `api`.
 | `sources.traffic_wales`           | `road_ref_overrides`  | Road names traffic.wales and OSM spell differently     |
 | `sources.northern_ireland`        | `junction_search_km`  | How far around a street to look for its crossing       |
 | `sources.traffic_scotland`        | `ftp_host`/`camera_list`/`image_directory`/`poll_interval_seconds` | FTP feed location and watcher poll rate (never below 600s; credentials via env vars) |
+| `sources.essex`                   | `base_url`/`index_path` | CCTV camera listing page                             |
 | `vehicle_watcher`                 | `interval_seconds`    | How often to re-check every camera (seconds)           |
 | `vehicle_watcher`                 | `workers`             | Concurrent threads used for fetching images             |
 | `vehicle_watcher`                 | `input_size`          | Detector input resolution (smaller = faster, less accurate) |

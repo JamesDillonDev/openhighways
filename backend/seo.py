@@ -41,6 +41,7 @@ SOURCE_LABELS = {
     "traffic_scotland": "Traffic Scotland",
     "traffic_wales": "Traffic Wales",
     "northern_ireland": "TrafficWatchNI",
+    "essex": "Essex Highways",
 }
 
 # URL slug -> (label, source). One provider per region, in the map filter's
@@ -51,6 +52,7 @@ REGIONS = {
     "scotland": ("Scotland", "traffic_scotland"),
     "wales": ("Wales", "traffic_wales"),
     "northern-ireland": ("Northern Ireland", "northern_ireland"),
+    "essex": ("Essex", "essex"),
 }
 
 SOURCE_REGION = {source: slug for slug, (_, source) in REGIONS.items()}

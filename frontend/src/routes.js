@@ -9,6 +9,7 @@ export const REGION_SOURCES = {
   scotland: 'traffic_scotland',
   wales: 'traffic_wales',
   'northern-ireland': 'northern_ireland',
+  essex: 'essex',
 }
 
 const SOURCE_REGIONS = Object.fromEntries(

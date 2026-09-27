@@ -14,7 +14,7 @@ const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.6.1'
+const APP_VERSION = 'v1.7.0'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
@@ -25,6 +25,7 @@ const SOURCE_LABELS = {
   traffic_scotland: 'Traffic Scotland',
   traffic_wales: 'Traffic Wales',
   northern_ireland: 'Traffic Watch NI',
+  essex: 'Essex Highways',
 }
 
 // The map's filter list names regions rather than providers - a visitor
@@ -37,6 +38,7 @@ const REGION_LABELS = {
   tfl: 'London',
   traffic_wales: 'Wales',
   northern_ireland: 'Northern Ireland',
+  essex: 'Essex',
 }
 
 const REGION_ORDER = Object.keys(REGION_LABELS)
@@ -88,11 +90,19 @@ const SOURCE_CREDITS = [
     ],
   },
   {
+    source: 'essex',
+    href: 'https://www.essex.gov.uk/about-essexgovuk/terms-and-conditions',
+    lines: [
+      'Camera images from Essex Highways.',
+      '\u00a9 Essex County Council.',
+    ],
+  },
+  {
     source: 'openstreetmap',
     href: 'https://www.openstreetmap.org/copyright',
     lines: [
-      'Map tiles, and the road geometry used to place Welsh and Northern',
-      'Irish cameras, \u00a9 OpenStreetMap contributors, licensed under the ODbL.',
+      'Map tiles, and the road geometry used to place Welsh, Northern Irish',
+      'and Essex cameras, \u00a9 OpenStreetMap contributors, licensed under the ODbL.',
     ],
   },
 ]
@@ -111,6 +121,7 @@ const SOURCE_COLORS = {
   traffic_scotland: '#0f7b43',
   traffic_wales: '#a3122a',
   northern_ireland: '#1d7a4c',
+  essex: '#5a3d8a',
 }
 
 // Each provider's own logo, downloaded from their official site

@@ -18,6 +18,7 @@ SOURCE_NAMES = [
     "traffic_wales",
     "northern_ireland",
     "traffic_scotland",
+    "essex",
 ]
 
 # Each provider sets its own terms for reuse and several specify the exact
@@ -45,8 +46,11 @@ it has to carry the same credits:
   Control Centre. © Crown copyright, licensed under the Open Government
   Licence v3.0."
   ([notice](https://www.trafficwatchni.com/twni/crown-copyright))
-- **OpenStreetMap** - Welsh and Northern Irish camera positions are derived
-  from OSM road geometry, licensed under the ODbL.
+- **Essex Highways** - "Camera images from Essex Highways. © Essex County
+  Council."
+  ([terms](https://www.essex.gov.uk/about-essexgovuk/terms-and-conditions))
+- **OpenStreetMap** - Welsh, Northern Irish and Essex camera positions are
+  derived from OSM road geometry, licensed under the ODbL.
   ([copyright](https://www.openstreetmap.org/copyright))
 """
 
