@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -304,6 +306,26 @@ def run_cycle(
     return updated
 
 
+def _lower_own_priority() -> None:
+    """On Fly, this runs as a background thread inside the same gunicorn
+    process (see backend/app.py) - a single shared vCPU, so the decode/
+    inference work here was starving gunicorn's HTTP threads of CPU long
+    enough to trip their socket write timeout. Linux's setpriority() is
+    per-thread (the "pid" it takes is really the calling thread's tid), so
+    this only deprioritises this one thread, not the whole process - the
+    standalone docker-compose watcher process is unaffected either way.
+    Niceness can only be raised (deprioritised) without extra privileges;
+    unsupported platforms (Windows, non-Linux) just skip this."""
+
+    if not hasattr(os, "setpriority"):
+        return
+
+    try:
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 10)
+    except OSError:
+        logger.warning("Could not lower vehicle watcher thread priority", exc_info=True)
+
+
 def main():
 
     logging.basicConfig(
@@ -311,6 +333,8 @@ def main():
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+
+    _lower_own_priority()
 
     sources_by_name = {source.name: source for source in load_sources()}
 
