@@ -3,7 +3,7 @@ import { createPortal, flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { MapContainer, TileLayer, Popup, ZoomControl, useMap } from 'react-leaflet'
 import L from 'leaflet'
-import { IoCameraOutline } from 'react-icons/io5'
+import { IoCameraOutline, IoHourglassOutline, IoRefresh } from 'react-icons/io5'
 import { locate } from 'leaflet.locatecontrol'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.locatecontrol/dist/L.Control.Locate.min.css'
@@ -14,7 +14,7 @@ const UK_CENTER = [54.5, -3]
 const POLL_INTERVAL_MS = 30000
 const IMAGE_REFRESH_MS = 1000
 
-const APP_VERSION = 'v1.7.0'
+const APP_VERSION = 'v1.7.1'
 const REPO_URL = 'https://github.com/JamesDillonDev/openhighways'
 
 // Friendlier labels for known sources - falls back to the raw name for any
@@ -821,6 +821,86 @@ function SourceCredits() {
   )
 }
 
+const SEARCH_RESULT_LIMIT = 8
+
+// Search box at the top of the panel: matches a camera's name, road or id and
+// opens the chosen camera, flying the map to it.
+function CameraSearch({ cameras, onSelect }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const box = useRef(null)
+
+  // Clicking anywhere outside the search closes the dropdown.
+  useEffect(() => {
+    const handleClick = (event) => {
+      if (box.current && !box.current.contains(event.target)) setOpen(false)
+    }
+
+    document.addEventListener('mousedown', handleClick)
+
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  const results = useMemo(() => {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+
+    if (terms.length === 0) return []
+
+    const matches = []
+
+    for (const camera of cameras) {
+      const haystack = `${camera.name || ''} ${camera.road || ''} ${camera.id}`.toLowerCase()
+
+      if (terms.every((term) => haystack.includes(term))) {
+        matches.push(camera)
+        if (matches.length === SEARCH_RESULT_LIMIT) break
+      }
+    }
+
+    return matches
+  }, [query, cameras])
+
+  const choose = (camera) => {
+    setQuery('')
+    onSelect(camera)
+  }
+
+  return (
+    <div className="camera-search" ref={box}>
+      <input
+        type="search"
+        className="camera-search-input"
+        placeholder="Search cameras…"
+        aria-label="Search cameras"
+        value={query}
+        onChange={(event) => {
+          setQuery(event.target.value)
+          setOpen(true)
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && results.length > 0) choose(results[0])
+          if (event.key === 'Escape') setQuery('')
+        }}
+      />
+
+      {open && query.trim() && (
+        <ul className="camera-search-results">
+          {results.length === 0 && <li className="camera-search-empty">No cameras found</li>}
+          {results.map((camera) => (
+            <li key={camera.id}>
+              <button type="button" onClick={() => choose(camera)}>
+                {cameraLabel(camera)}
+                {camera.road && <span className="camera-search-road">{camera.road}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function App() {
   const [cameras, setCameras] = useState([])
   // The URL is the source of truth for what's open - /camera/<id>,
@@ -940,17 +1020,28 @@ function App() {
     <div className="app">
       <div className="top-left-panel">
         {/* The page's one heading - the logo's alt text reads as its title. */}
-        <h1 className="app-title">
-          <img className="app-logo" src="/logo.png" alt="OpenHighways" />
-        </h1>
+        <div className="panel-header">
+          <h1 className="app-title">
+            <img className="app-logo" src="/logo.png" alt="OpenHighways" />
+          </h1>
 
-        <button
-          className="refresh-button"
-          onClick={loadCameras}
-          disabled={refreshing}
-        >
-          {refreshing ? 'Refreshing…' : 'Refresh'}
-        </button>
+          <button
+            className="refresh-button"
+            onClick={loadCameras}
+            disabled={refreshing}
+            aria-label={refreshing ? 'Refreshing cameras' : 'Refresh cameras'}
+            title="Refresh"
+          >
+            {refreshing
+              ? <IoHourglassOutline className="refresh-icon" />
+              : <IoRefresh className="refresh-icon" />}
+          </button>
+        </div>
+
+        <CameraSearch
+          cameras={visibleCameras}
+          onSelect={(camera) => navigate(cameraPath(camera), { focus: true })}
+        />
 
         {sources.length > 0 && (
           <div className="source-filter">
@@ -986,13 +1077,7 @@ function App() {
           <span>&middot;</span>
           <span>{APP_VERSION}</span>
           <span>&middot;</span>
-          {/* The same API this map runs on is public and documented - the
-              footer is the only place a visitor would think to look for it. */}
-          <a href="/api/docs" target="_blank" rel="noreferrer">API</a>
-          <span>&middot;</span>
           <a href={REPO_URL} target="_blank" rel="noreferrer">GitHub</a>
-          <span>&middot;</span>
-          <a href="/sitemap.xml" target="_blank" rel="noreferrer">Sitemap</a>
         </div>
       </div>
 
